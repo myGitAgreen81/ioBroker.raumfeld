@@ -79,3 +79,55 @@ export interface HostInfo {
 	/** Raum, in dem dieses Geraet steht. */
 	roomName?: string;
 }
+
+/** Ein Dienst eines Geraets, so wie seine Beschreibung ihn nennt. */
+export interface ServiceEndpoint {
+	/** Voller Diensttyp, etwa urn:schemas-upnp-org:service:AVTransport:1 */
+	serviceType: string;
+	/** Adresse, an die SOAP-Aufrufe gehen. */
+	controlUrl: string;
+	/** Adresse, an der Ereignisse abonniert werden. */
+	eventSubUrl: string;
+}
+
+/** Die Titelangaben aus einem DIDL-Lite-Dokument. */
+export interface TrackInfo {
+	/** Titel des Stuecks. */
+	title: string;
+	/** Interpret. */
+	artist: string;
+	/** Album. */
+	album: string;
+	/** Adresse des Titelbildes. */
+	albumArtUri: string;
+	/** Raumfelds Angabe der Quelle, etwa "Spotify" oder "TuneIn". */
+	section: string;
+	/** Kennung des Objekts in der Bibliothek. */
+	objectId: string;
+}
+
+/** Der Wiedergabezustand eines Renderers. */
+export interface TransportInfo {
+	/** PLAYING, PAUSED_PLAYBACK, STOPPED oder TRANSITIONING. */
+	state: string;
+	/** OK oder eine Fehlerangabe des Geraets. */
+	status: string;
+}
+
+/** Laufzeit und Dauer des laufenden Titels. */
+export interface PositionInfo {
+	/** Gesamtdauer in der Form h:mm:ss. */
+	duration: string;
+	/** Verstrichene Zeit in der Form h:mm:ss. */
+	position: string;
+}
+
+/** Die drei Baender des Klangreglers in Dezibel. */
+export interface ToneFilter {
+	/** Tiefen. */
+	low: number;
+	/** Mitten. */
+	mid: number;
+	/** Hoehen. */
+	high: number;
+}

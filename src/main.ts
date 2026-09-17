@@ -3,19 +3,43 @@
  */
 
 import * as utils from '@iobroker/adapter-core';
+import { readServices } from './lib/deviceDirectory';
 import { discover } from './lib/discovery';
-import { RaumfeldHostService } from './lib/hostService';
+import { durationToSeconds, parseDidlLite, parseLastChange } from './lib/events';
+import { GenaListener, localAddressTowards } from './lib/gena';
+import { HOST_SERVICE_PORT, RaumfeldHostService } from './lib/hostService';
 import { roomIdFromName } from './lib/raumfeldXml';
+import { RendererControl } from './lib/renderer';
 import type { RaumfeldRoom, ZoneConfiguration } from './lib/types';
+
+/** Was der Adapter sich zu einem Raum merkt, waehrend er laeuft. */
+interface RoomRuntime {
+	/** Objekt-ID des Raumes. */
+	id: string;
+	/** Dauerhafte Kennung des Raumes. */
+	udn: string;
+	/** Kennung des Renderers, der im Raum steht. */
+	rendererUdn: string;
+	/** Kennung der Zone, falls der Raum gerade gruppiert ist. */
+	zoneUdn?: string;
+}
 
 class Raumfeld extends utils.Adapter {
 	private hostService?: RaumfeldHostService;
+	private gena?: GenaListener;
 
-	/**
-	 * Raum-UDN zu Objekt-ID. Ueber diese Zuordnung faellt auf, wenn ein Raum in
-	 * der Raumfeld-App umbenannt wurde: die UDN bleibt, die ID aendert sich.
-	 */
+	/** Raum-UDN zu Objekt-ID, um Umbenennungen zu erkennen. */
 	private readonly roomIds = new Map<string, string>();
+	/** Objekt-ID zu den Laufzeitangaben des Raumes. */
+	private readonly rooms = new Map<string, RoomRuntime>();
+	/** Renderer-UDN zur Objekt-ID des Raumes, fuer eingehende Ereignisse. */
+	private readonly roomByRenderer = new Map<string, string>();
+	/** Geraete-UDN zur Adresse ihrer Beschreibung, aus listDevices. */
+	private readonly deviceLocations = new Map<string, string>();
+	/** Bereits aufgebaute Bedienschnittstellen je Geraet. */
+	private readonly controls = new Map<string, { control: RendererControl; location: string }>();
+	/** Geraete, deren Ereignisse bereits abonniert sind, samt verwendeter Adresse. */
+	private readonly subscribed = new Map<string, string>();
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -45,7 +69,11 @@ class Raumfeld extends utils.Adapter {
 		}
 
 		this.log.info(`Raumfeld-Host auf ${address}`);
-		await this.setStateAsync('info.hostAddress', address, true);
+		await this.setState('info.hostAddress', address, true);
+
+		if (!(await this.startEventListener(address))) {
+			return;
+		}
 
 		this.hostService = new RaumfeldHostService({
 			address,
@@ -74,7 +102,42 @@ class Raumfeld extends utils.Adapter {
 			});
 		});
 
+		this.subscribeStates('rooms.*');
 		this.hostService.start();
+	}
+
+	/**
+	 * Startet den Zuhoerer fuer UPnP-Ereignisse.
+	 *
+	 * Die Adresse, unter der die Geraete zurueckfinden, wird nicht geraten,
+	 * sondern beim Betriebssystem erfragt: eine kurze Verbindung zum Host
+	 * verraet, welche Netzkarte die Routingtabelle dafuer waehlt. Auf einem
+	 * Rechner mit mehreren Karten - wie hier einer im Server- und einer im
+	 * WLAN-Segment - ist das der einzige verlaessliche Weg.
+	 *
+	 * @param hostAddress - Adresse des Raumfeld-Hosts.
+	 * @returns Ob der Zuhoerer bereitsteht.
+	 */
+	private async startEventListener(hostAddress: string): Promise<boolean> {
+		try {
+			const configured = String(this.config.bindAddress ?? '').trim();
+			const local =
+				configured.length > 0 ? configured : await localAddressTowards(hostAddress, HOST_SERVICE_PORT);
+
+			this.gena = new GenaListener({
+				debug: message => this.log.debug(message),
+				warn: message => this.log.warn(message),
+			});
+			await this.gena.start(local);
+			this.log.info(`Ereignisse werden entgegengenommen auf ${this.gena.callbackBase}`);
+			return true;
+		} catch (err) {
+			this.log.error(
+				`Der Zuhoerer fuer Geraeteereignisse liess sich nicht starten: ${asMessage(err)}. ` +
+					'Ohne ihn melden die Lautsprecher keine Aenderungen.',
+			);
+			return false;
+		}
 	}
 
 	/**
@@ -85,6 +148,8 @@ class Raumfeld extends utils.Adapter {
 	 * es vor dem Hinzufuegen dieser Datenpunkte schon gab, haette sie sonst
 	 * nie - und jeder Schreibzugriff quittierte das mit der Warnung
 	 * "has no existing object".
+	 *
+	 * @returns Nichts.
 	 */
 	private async ensureInfoObjects(): Promise<void> {
 		await this.defineState('info.hostAddress', 'Adresse des Raumfeld-Hosts', 'string', 'info.ip', false);
@@ -96,6 +161,8 @@ class Raumfeld extends utils.Adapter {
 	/**
 	 * Ermittelt die Adresse des Hosts: entweder aus den Einstellungen oder per
 	 * SSDP-Suche nach dem ConfigDevice, das es im System nur einmal gibt.
+	 *
+	 * @returns Die Adresse, oder undefined, wenn kein Host zu finden war.
 	 */
 	private async resolveHostAddress(): Promise<string | undefined> {
 		const configured = String(this.config.hostAddress ?? '').trim();
@@ -128,15 +195,19 @@ class Raumfeld extends utils.Adapter {
 		return undefined;
 	}
 
-	/** Liest die unveraenderlichen Angaben des Hosts einmal aus. */
+	/**
+	 * Liest die unveraenderlichen Angaben des Hosts einmal aus.
+	 *
+	 * @returns Nichts.
+	 */
 	private async readHostInfo(): Promise<void> {
 		if (!this.hostService) {
 			return;
 		}
 		try {
 			const info = await this.hostService.fetchHostInfo();
-			await this.setStateAsync('info.hostName', info.hostName ?? '', true);
-			await this.setStateAsync('info.hostRoom', info.roomName ?? '', true);
+			await this.setState('info.hostName', info.hostName ?? '', true);
+			await this.setState('info.hostRoom', info.roomName ?? '', true);
 		} catch (err) {
 			this.log.debug(`getHostInfo nicht lesbar: ${asMessage(err)}`);
 		}
@@ -151,13 +222,16 @@ class Raumfeld extends utils.Adapter {
 	 * Objekte loeschen, waeren mit ihnen auch die Verlaufsdaten weg.
 	 *
 	 * @param config - Die vom Host gemeldete Zonenaufteilung.
+	 * @returns Nichts.
 	 */
 	private async applyZoneConfiguration(config: ZoneConfiguration): Promise<void> {
 		this.log.debug(
 			`Zonenaufteilung: ${config.zones.length} Zonen, ${config.unassignedRooms.length} einzelne Raeume`,
 		);
 
-		await this.setStateAsync(
+		await this.refreshDeviceLocations();
+
+		await this.setState(
 			'info.zones',
 			JSON.stringify(config.zones.map(zone => ({ udn: zone.udn, rooms: zone.rooms.map(room => room.name) }))),
 			true,
@@ -167,13 +241,238 @@ class Raumfeld extends utils.Adapter {
 		for (const room of config.allRooms) {
 			const id = await this.ensureRoom(room);
 			present.add(id);
+
+			this.rooms.set(id, {
+				id,
+				udn: room.udn,
+				rendererUdn: room.renderers[0]?.udn ?? '',
+				zoneUdn: room.zoneUdn,
+			});
+			if (room.renderers[0]) {
+				this.roomByRenderer.set(room.renderers[0].udn, id);
+			}
+
 			await this.writeRoomStates(id, room, true);
+			await this.attachRenderer(id);
 		}
 
 		for (const [udn, id] of this.roomIds) {
 			if (!present.has(id)) {
 				this.log.debug(`Raum ${id} (${udn}) ist derzeit nicht gemeldet`);
-				await this.setStateAsync(`rooms.${id}.online`, false, true);
+				await this.setState(`rooms.${id}.online`, false, true);
+			}
+		}
+	}
+
+	/**
+	 * Holt die aktuelle Geraeteliste des Hosts.
+	 *
+	 * Die Ports der Dienste wechseln bei jedem Neustart eines Lautsprechers.
+	 * Deshalb wird die Liste bei jeder Aenderung der Zonen neu gelesen, statt
+	 * die Adressen einmal zu merken.
+	 *
+	 * @returns Nichts.
+	 */
+	private async refreshDeviceLocations(): Promise<void> {
+		if (!this.hostService) {
+			return;
+		}
+		try {
+			for (const device of await this.hostService.fetchDevices()) {
+				this.deviceLocations.set(device.udn, device.location);
+			}
+		} catch (err) {
+			this.log.debug(`listDevices nicht lesbar: ${asMessage(err)}`);
+		}
+	}
+
+	/**
+	 * Verbindet den Renderer eines Raumes: Bedienschnittstelle aufbauen,
+	 * Ereignisse abonnieren und die Ausgangswerte einlesen.
+	 *
+	 * @param roomId - Objekt-ID des Raumes.
+	 * @returns Nichts.
+	 */
+	private async attachRenderer(roomId: string): Promise<void> {
+		const room = this.rooms.get(roomId);
+		if (!room || room.rendererUdn === '') {
+			return;
+		}
+
+		const control = await this.controlFor(room.rendererUdn);
+		if (!control) {
+			return;
+		}
+
+		const location = this.deviceLocations.get(room.rendererUdn);
+		if (this.gena && location !== undefined && this.subscribed.get(room.rendererUdn) !== location) {
+			// Eine neue Adresse heisst: das Geraet wurde neu gestartet. Das alte
+			// Abonnement kennt es nicht mehr, also frisch abonnieren.
+			this.subscribed.set(room.rendererUdn, location);
+			for (const service of ['AVTransport', 'RenderingControl']) {
+				const url = control.eventUrl(service);
+				if (!url) {
+					continue;
+				}
+				try {
+					await this.gena.subscribe(url, properties => {
+						void this.onRendererEvent(room.rendererUdn, properties);
+					});
+				} catch (err) {
+					this.log.warn(`${service} von ${roomId} nicht abonnierbar: ${asMessage(err)}`);
+				}
+			}
+		}
+
+		await this.readInitialValues(roomId, control);
+	}
+
+	/**
+	 * Baut die Bedienschnittstelle eines Geraets auf, oder liefert die
+	 * vorhandene.
+	 *
+	 * @param udn - Kennung des Geraets.
+	 * @returns Die Bedienschnittstelle, oder undefined, wenn das Geraet
+	 *   derzeit nicht erreichbar ist.
+	 */
+	private async controlFor(udn: string): Promise<RendererControl | undefined> {
+		const location = this.deviceLocations.get(udn);
+		if (location === undefined) {
+			return undefined;
+		}
+
+		const known = this.controls.get(udn);
+		if (known && known.location === location) {
+			return known.control;
+		}
+
+		try {
+			const control = new RendererControl(await readServices(location));
+			this.controls.set(udn, { control, location });
+			return control;
+		} catch (err) {
+			this.log.debug(`Geraetebeschreibung von ${udn} nicht lesbar: ${asMessage(err)}`);
+			return undefined;
+		}
+	}
+
+	/**
+	 * Liest die Werte, die nicht von selbst gemeldet werden, einmal aus.
+	 *
+	 * Die Ereignisse liefern Lautstaerke und Wiedergabezustand erst bei der
+	 * naechsten Aenderung. Nach einem Neustart des Adapters stuenden die
+	 * Datenpunkte sonst leer da, bis jemand etwas anfasst.
+	 *
+	 * @param roomId - Objekt-ID des Raumes.
+	 * @param control - Bedienschnittstelle des Renderers.
+	 * @returns Nichts.
+	 */
+	private async readInitialValues(roomId: string, control: RendererControl): Promise<void> {
+		if (control.has('RenderingControl')) {
+			try {
+				await this.setState(`rooms.${roomId}.volume`, await control.volume(), true);
+				await this.setState(`rooms.${roomId}.mute`, await control.mute(), true);
+				const filter = await control.filter();
+				await this.setState(`rooms.${roomId}.equalizer.low`, filter.low, true);
+				await this.setState(`rooms.${roomId}.equalizer.mid`, filter.mid, true);
+				await this.setState(`rooms.${roomId}.equalizer.high`, filter.high, true);
+			} catch (err) {
+				this.log.debug(`Klangwerte von ${roomId} nicht lesbar: ${asMessage(err)}`);
+			}
+		}
+
+		if (control.has('AVTransport')) {
+			try {
+				const transport = await control.transportInfo();
+				await this.setState(`rooms.${roomId}.transport.state`, transport.state, true);
+				await this.setState(`rooms.${roomId}.transport.playMode`, await control.playMode(), true);
+				await this.writePosition(roomId, control);
+			} catch (err) {
+				this.log.debug(`Wiedergabezustand von ${roomId} nicht lesbar: ${asMessage(err)}`);
+			}
+		}
+	}
+
+	/**
+	 * Schreibt Laufzeit und Dauer eines Raumes.
+	 *
+	 * @param roomId - Objekt-ID des Raumes.
+	 * @param control - Bedienschnittstelle des Renderers.
+	 * @returns Nichts.
+	 */
+	private async writePosition(roomId: string, control: RendererControl): Promise<void> {
+		const position = await control.positionInfo();
+		await this.setState(`rooms.${roomId}.transport.position`, position.position, true);
+		await this.setState(`rooms.${roomId}.transport.positionSec`, durationToSeconds(position.position), true);
+		await this.setState(`rooms.${roomId}.transport.duration`, position.duration, true);
+		await this.setState(`rooms.${roomId}.transport.durationSec`, durationToSeconds(position.duration), true);
+	}
+
+	/**
+	 * Verarbeitet eine Meldung eines Renderers.
+	 *
+	 * Alles Interessante steckt im LastChange-Element; daneben kommt bei
+	 * AVTransport noch BufferFilled als eigene Eigenschaft an, die hier nicht
+	 * gebraucht wird.
+	 *
+	 * @param rendererUdn - Kennung des meldenden Renderers.
+	 * @param properties - Die Eigenschaften aus der Meldung.
+	 * @returns Nichts.
+	 */
+	private async onRendererEvent(rendererUdn: string, properties: Record<string, string>): Promise<void> {
+		const roomId = this.roomByRenderer.get(rendererUdn);
+		if (roomId === undefined || properties.LastChange === undefined) {
+			return;
+		}
+
+		const values = parseLastChange(properties.LastChange);
+		const base = `rooms.${roomId}`;
+
+		if (values.TransportState !== undefined) {
+			await this.setState(`${base}.transport.state`, values.TransportState, true);
+		}
+		if (values.CurrentPlayMode !== undefined) {
+			await this.setState(`${base}.transport.playMode`, values.CurrentPlayMode, true);
+		}
+		if (values.CurrentTrackDuration !== undefined) {
+			await this.setState(`${base}.transport.duration`, values.CurrentTrackDuration, true);
+			await this.setState(`${base}.transport.durationSec`, durationToSeconds(values.CurrentTrackDuration), true);
+		}
+		if (values.AVTransportURI !== undefined) {
+			await this.setState(`${base}.track.uri`, values.AVTransportURI, true);
+		}
+		// PowerState ist eine Raumfeld-Erweiterung und kommt im selben Ereignis
+		// wie der Wiedergabezustand - schneller als ueber getZones.
+		if (values.PowerState !== undefined) {
+			await this.setState(`${base}.powerState`, values.PowerState, true);
+			await this.setState(`${base}.standby`, values.PowerState !== 'ACTIVE', true);
+		}
+
+		const metadata = values.CurrentTrackMetaData ?? values.AVTransportURIMetaData;
+		if (metadata !== undefined) {
+			const track = parseDidlLite(metadata);
+			if (track) {
+				await this.setState(`${base}.track.title`, track.title, true);
+				await this.setState(`${base}.track.artist`, track.artist, true);
+				await this.setState(`${base}.track.album`, track.album, true);
+				await this.setState(`${base}.track.albumArt`, track.albumArtUri, true);
+				await this.setState(`${base}.track.source`, track.section, true);
+			}
+		}
+
+		if (values.Volume !== undefined) {
+			await this.setState(`${base}.volume`, Number(values.Volume), true);
+		}
+		if (values.Mute !== undefined) {
+			await this.setState(`${base}.mute`, values.Mute === '1', true);
+		}
+		for (const [name, id] of [
+			['LowDB', 'low'],
+			['MidDB', 'mid'],
+			['HighDB', 'high'],
+		] as const) {
+			if (values[name] !== undefined) {
+				await this.setState(`${base}.equalizer.${id}`, Number(values[name]), true);
 			}
 		}
 	}
@@ -182,6 +481,7 @@ class Raumfeld extends utils.Adapter {
 	 * Legt die Objekte eines Raumes an, falls sie noch fehlen.
 	 *
 	 * @param room - Der Raum, so wie der Host ihn meldet.
+	 * @returns Die Objekt-ID des Raumes.
 	 */
 	private async ensureRoom(room: RaumfeldRoom): Promise<string> {
 		const id = roomIdFromName(room.name);
@@ -192,6 +492,9 @@ class Raumfeld extends utils.Adapter {
 				`Raum "${previous}" heisst jetzt "${room.name}". Der alte Zweig rooms.${previous} bleibt stehen ` +
 					'und kann von Hand geloescht werden.',
 			);
+		}
+		if (this.roomIds.get(room.udn) === id && this.rooms.has(id)) {
+			return id;
 		}
 		this.roomIds.set(room.udn, id);
 
@@ -214,23 +517,91 @@ class Raumfeld extends utils.Adapter {
 			'indicator',
 			false,
 		);
+		await this.defineState(`rooms.${id}.standby`, 'Bereitschaft', 'boolean', 'switch.power', true);
+		await this.defineState(`rooms.${id}.volume`, 'Lautstaerke', 'number', 'level.volume', true, {
+			min: 0,
+			max: 100,
+			unit: '%',
+		});
+		await this.defineState(`rooms.${id}.mute`, 'Stumm', 'boolean', 'media.mute', true);
+
+		for (const [channel, label] of [
+			['low', 'Tiefen'],
+			['mid', 'Mitten'],
+			['high', 'Hoehen'],
+		] as const) {
+			await this.defineState(`rooms.${id}.equalizer.${channel}`, `${label} in dB`, 'number', 'level', true, {
+				unit: 'dB',
+			});
+		}
+
+		await this.defineState(`rooms.${id}.transport.state`, 'Wiedergabezustand', 'string', 'media.state', false);
+		await this.defineState(`rooms.${id}.transport.playMode`, 'Abspielart', 'string', 'media.mode.repeat', true);
+		await this.defineState(`rooms.${id}.transport.position`, 'Laufzeit', 'string', 'media.elapsed.text', false);
+		await this.defineState(
+			`rooms.${id}.transport.positionSec`,
+			'Laufzeit in Sekunden',
+			'number',
+			'media.elapsed',
+			false,
+			{ unit: 's' },
+		);
+		await this.defineState(`rooms.${id}.transport.duration`, 'Dauer', 'string', 'media.duration.text', false);
+		await this.defineState(
+			`rooms.${id}.transport.durationSec`,
+			'Dauer in Sekunden',
+			'number',
+			'media.duration',
+			false,
+			{ unit: 's' },
+		);
+		await this.defineState(`rooms.${id}.transport.seek`, 'Springen nach h:mm:ss', 'string', 'media.seek', true);
+		await this.defineState(`rooms.${id}.transport.playUri`, 'Adresse abspielen', 'string', 'media.url', true);
+		for (const [command, label] of [
+			['play', 'Abspielen'],
+			['pause', 'Anhalten'],
+			['stop', 'Beenden'],
+			['next', 'Naechster Titel'],
+			['previous', 'Voriger Titel'],
+		] as const) {
+			await this.defineState(`rooms.${id}.transport.${command}`, label, 'boolean', `button.${command}`, true);
+		}
+
+		for (const [field, label] of [
+			['title', 'Titel'],
+			['artist', 'Interpret'],
+			['album', 'Album'],
+			['albumArt', 'Titelbild'],
+			['uri', 'Adresse'],
+			['source', 'Quelle'],
+		] as const) {
+			await this.defineState(`rooms.${id}.track.${field}`, label, 'string', 'media.title', false);
+		}
+
+		await this.defineState(`rooms.${id}.group.joinRoom`, 'Zu Raum hinzufuegen', 'string', 'text', true);
+		await this.defineState(`rooms.${id}.group.leave`, 'Aus der Zone loesen', 'boolean', 'button', true);
 
 		return id;
 	}
 
 	/**
+	 * Schreibt die Angaben, die aus der Zonenaufteilung stammen.
+	 *
 	 * @param id - Objekt-ID des Raumes.
 	 * @param room - Der Raum, so wie der Host ihn meldet.
 	 * @param online - Ob der Raum in der aktuellen Meldung enthalten war.
+	 * @returns Nichts.
 	 */
 	private async writeRoomStates(id: string, room: RaumfeldRoom, online: boolean): Promise<void> {
-		await this.setStateAsync(`rooms.${id}.name`, room.name, true);
-		await this.setStateAsync(`rooms.${id}.online`, online, true);
+		await this.setState(`rooms.${id}.name`, room.name, true);
+		await this.setState(`rooms.${id}.online`, online, true);
 		// Fehlt powerState, ist der Raum wach - der Host laesst das Attribut
 		// dann weg, statt ACTIVE zu schreiben.
-		await this.setStateAsync(`rooms.${id}.powerState`, room.powerState ?? 'ACTIVE', true);
-		await this.setStateAsync(`rooms.${id}.zone`, room.zoneUdn ?? '', true);
-		await this.setStateAsync(
+		const powerState = room.powerState ?? 'ACTIVE';
+		await this.setState(`rooms.${id}.powerState`, powerState, true);
+		await this.setState(`rooms.${id}.standby`, powerState !== 'ACTIVE', true);
+		await this.setState(`rooms.${id}.zone`, room.zoneUdn ?? '', true);
+		await this.setState(
 			`rooms.${id}.spotifyConnect`,
 			room.renderers.some(renderer => renderer.spotifyConnect),
 			true,
@@ -245,6 +616,7 @@ class Raumfeld extends utils.Adapter {
 	 * @param type - Datentyp des Wertes.
 	 * @param role - ioBroker-Rolle, die der Oberflaeche sagt, was der Wert bedeutet.
 	 * @param write - Ob der Datenpunkt beschrieben werden darf.
+	 * @param extra - Weitere Angaben wie Einheit oder Grenzen.
 	 * @returns Nichts; das Objekt wird nur angelegt, wenn es noch fehlt.
 	 */
 	private async defineState(
@@ -253,12 +625,183 @@ class Raumfeld extends utils.Adapter {
 		type: ioBroker.CommonType,
 		role: string,
 		write: boolean,
+		extra: Partial<ioBroker.StateCommon> = {},
 	): Promise<void> {
 		await this.setObjectNotExistsAsync(id, {
 			type: 'state',
-			common: { name, type, role, read: true, write },
+			common: { name, type, role, read: true, write, ...extra },
 			native: {},
 		});
+	}
+
+	/**
+	 * Waehlt den Renderer, an den ein Transportbefehl geht.
+	 *
+	 * Steckt der Raum in einer Zone, gehoert der Befehl an deren Renderer -
+	 * sonst spielte nur ein Lautsprecher der Gruppe. Ein Raum ohne Zone
+	 * bedient seinen eigenen Renderer.
+	 *
+	 * @param room - Der Raum, um den es geht.
+	 * @returns Die zustaendige Bedienschnittstelle, falls erreichbar.
+	 */
+	private async transportControl(room: RoomRuntime): Promise<RendererControl | undefined> {
+		if (room.zoneUdn !== undefined && room.zoneUdn !== '') {
+			const zoneControl = await this.controlFor(room.zoneUdn);
+			if (zoneControl) {
+				return zoneControl;
+			}
+			this.log.debug(`Zonen-Renderer ${room.zoneUdn} nicht erreichbar, verwende den Raum-Renderer`);
+		}
+		return await this.controlFor(room.rendererUdn);
+	}
+
+	/**
+	 * @param id - State ID
+	 * @param state - State object
+	 */
+	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
+		if (!state || state.ack) {
+			return;
+		}
+		void this.handleCommand(id, state).catch((err: unknown) => {
+			this.log.error(`Befehl ${id} fehlgeschlagen: ${asMessage(err)}`);
+		});
+	}
+
+	/**
+	 * Fuehrt einen vom Nutzer geschriebenen Datenpunkt aus.
+	 *
+	 * @param id - Vollstaendige Objekt-ID des Datenpunkts.
+	 * @param state - Der geschriebene Zustand.
+	 * @returns Nichts.
+	 */
+	private async handleCommand(id: string, state: ioBroker.State): Promise<void> {
+		const match = /\.rooms\.([^.]+)\.(.+)$/.exec(id);
+		if (!match) {
+			return;
+		}
+		const [, roomId, path] = match;
+		const room = this.rooms.get(roomId);
+		if (!room) {
+			this.log.warn(`Befehl fuer unbekannten Raum ${roomId}`);
+			return;
+		}
+
+		const value = state.val;
+		this.log.debug(`Befehl ${path} fuer ${roomId}: ${String(value)}`);
+
+		// Lautstaerke, Klang und Bereitschaft gehoeren zum Raum-Renderer,
+		// Transportbefehle zur Zone - siehe transportControl.
+		const own = await this.controlFor(room.rendererUdn);
+
+		switch (path) {
+			case 'volume':
+				await own?.setVolume(Number(value));
+				return;
+			case 'mute':
+				await own?.setMute(Boolean(value));
+				return;
+			case 'standby':
+				if (value) {
+					await own?.enterManualStandby();
+				} else {
+					await own?.leaveStandby();
+				}
+				return;
+			case 'equalizer.low':
+			case 'equalizer.mid':
+			case 'equalizer.high':
+				await this.applyFilter(room, path.split('.')[1] as 'low' | 'mid' | 'high', Number(value));
+				return;
+			case 'group.joinRoom':
+				await this.joinRoom(room, String(value));
+				await this.setState(id, '', true);
+				return;
+			case 'group.leave':
+				await this.hostService?.connectRoomToZone(room.udn);
+				await this.setState(id, false, true);
+				return;
+			default:
+				break;
+		}
+
+		const transport = await this.transportControl(room);
+		if (!transport) {
+			this.log.warn(`Kein erreichbarer Renderer fuer ${roomId}`);
+			return;
+		}
+
+		switch (path) {
+			case 'transport.play':
+			case 'transport.pause':
+			case 'transport.stop':
+			case 'transport.next':
+			case 'transport.previous': {
+				const command = path.split('.')[1] as 'play' | 'pause' | 'stop' | 'next' | 'previous';
+				await transport[command]();
+				await this.setState(id, false, true);
+				return;
+			}
+			case 'transport.playMode':
+				await transport.setPlayMode(String(value));
+				return;
+			case 'transport.seek':
+				await transport.seek(String(value));
+				await this.setState(id, '', true);
+				return;
+			case 'transport.playUri':
+				await transport.setUri(String(value));
+				await transport.play();
+				await this.setState(id, '', true);
+				return;
+			default:
+				this.log.debug(`Fuer ${path} gibt es keinen Befehl`);
+		}
+	}
+
+	/**
+	 * Setzt ein Band des Klangreglers.
+	 *
+	 * Das Geraet kennt nur SetFilter fuer alle drei Baender gemeinsam, also
+	 * werden die beiden anderen Werte mitgelesen und unveraendert mitgeschickt.
+	 *
+	 * @param room - Der betroffene Raum.
+	 * @param band - Welches Band geaendert wurde.
+	 * @param value - Der neue Wert in Dezibel.
+	 * @returns Nichts.
+	 */
+	private async applyFilter(room: RoomRuntime, band: 'low' | 'mid' | 'high', value: number): Promise<void> {
+		const control = await this.controlFor(room.rendererUdn);
+		if (!control) {
+			return;
+		}
+		const filter = await control.filter();
+		filter[band] = value;
+		await control.setFilter(filter);
+	}
+
+	/**
+	 * Fuegt einen Raum der Zone eines anderen Raumes hinzu.
+	 *
+	 * @param room - Der Raum, der wandern soll.
+	 * @param targetName - Name des Zielraums.
+	 * @returns Nichts.
+	 */
+	private async joinRoom(room: RoomRuntime, targetName: string): Promise<void> {
+		const targetId = roomIdFromName(targetName);
+		const target = this.rooms.get(targetId);
+		if (!target) {
+			this.log.warn(`Zielraum "${targetName}" ist nicht bekannt`);
+			return;
+		}
+		if (target.zoneUdn === undefined || target.zoneUdn === '') {
+			this.log.warn(
+				`"${targetName}" gehoert derzeit keiner Zone an. Dort muss erst etwas abgespielt werden, ` +
+					'damit eine Zone entsteht, der sich andere Raeume anschliessen koennen.',
+			);
+			return;
+		}
+		await this.hostService?.connectRoomToZone(room.udn, target.zoneUdn);
 	}
 
 	/**
@@ -271,24 +814,21 @@ class Raumfeld extends utils.Adapter {
 		try {
 			this.hostService?.stop();
 			this.hostService = undefined;
-			callback();
+
+			const gena = this.gena;
+			this.gena = undefined;
+			if (!gena) {
+				callback();
+				return;
+			}
+			// Abbestellen ist eine Hoeflichkeit gegenueber den Geraeten; klappt
+			// es nicht, laufen die Abonnements von selbst ab. Auf keinen Fall
+			// darf die Rueckmeldung daran haengen bleiben.
+			void gena.stop().finally(() => callback());
 		} catch (error) {
 			this.log.error(`Error during unloading: ${(error as Error).message}`);
 			callback();
 		}
-	}
-
-	/**
-	 * @param id - State ID
-	 * @param state - State object
-	 */
-	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
-		if (!state || state.ack) {
-			return;
-		}
-		// Schreibbare Datenpunkte kommen mit der Anbindung der Renderer dazu;
-		// bis dahin gibt es hier nichts zu tun.
-		this.log.debug(`Befehl fuer ${id} erhalten: ${String(state.val)}`);
 	}
 }
 
@@ -296,6 +836,7 @@ class Raumfeld extends utils.Adapter {
  * Holt eine lesbare Meldung aus einem unbekannten Fehlerwert.
  *
  * @param err - Der abgefangene Wert, der nicht zwingend ein Error ist.
+ * @returns Die Fehlermeldung als Text.
  */
 function asMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
