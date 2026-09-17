@@ -43,7 +43,7 @@
 			"uk": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
 			"zh-cn": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher UPnP 和 Raumfeld-Host-Webservice"
 		},
-		"authors": ["myGitAgreen81 <alex.gruen@gmail.com>"],
+		"authors": ["Alexander Grün <alex.gruen@gmail.com>"],
 		"keywords": ["raumfeld", "teufel", "multiroom", "upnp", "audio", "speaker"],
 		"licenseInformation": {
 			"type": "free",

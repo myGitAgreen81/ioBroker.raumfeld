@@ -120,12 +120,12 @@ Please refer to the [`dev-server` documentation](https://github.com/ioBroker/dev
 -->
 
 ### **WORK IN PROGRESS**
-* (myGitAgreen81) initial release
+* (Alexander Grün) initial release
 
 ## License
 MIT License
 
-Copyright (c) 2026 myGitAgreen81 <alex.gruen@gmail.com>
+Copyright (c) 2026 Alexander Grün <alex.gruen@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
