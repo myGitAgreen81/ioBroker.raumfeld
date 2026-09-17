@@ -2,7 +2,11 @@
 	"raumfeld adapter settings": "Ustawienia adaptera dla raumfeld",
 	"hostHint": "The adapter finds the host by itself as long as it sits in the same network segment as the speakers. SSDP is not forwarded between segments - in that case enter the addresses here.",
 	"hostAddress": "Address of the Raumfeld host",
-	"hostAddressHelp": "Leave empty for automatic discovery. The host is the device offering the ConfigDevice, recognisable by the open port 47365.",
+	"hostAddressHelp": "Leave empty for automatic discovery. The list comes from a live scan of the network; an address can also be entered by hand.",
 	"bindAddress": "Source address for discovery",
-	"bindAddressHelp": "Only needed when the machine has several network cards. Enter the address of the card that sits in the speakers' segment."
+	"bindAddressHelp": "Only needed when the machine has several network cards. Pick the card that sits in the speakers' segment - it also carries the callback channel for device events.",
+	"headerConnection": "Connection to the Raumfeld system",
+	"testConnection": "Test connection",
+	"headerHelp": "When nothing is found",
+	"helpText": "The host is the device running the system management, recognisable by the open port 47365. While it is switched off the whole system reports nothing - Spotify Connect stops listing the speakers as well. If the adapter sits in a different network segment, the devices must also be able to reach it back, otherwise they report no changes."
 }

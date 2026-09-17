@@ -2,6 +2,17 @@
 	"i18n": true,
 	"type": "panel",
 	"items": {
+		"_header": {
+			"type": "header",
+			"text": "headerConnection",
+			"size": 2,
+			"newLine": true,
+			"xs": 12,
+			"sm": 12,
+			"md": 12,
+			"lg": 12,
+			"xl": 12
+		},
 		"_hint": {
 			"type": "staticText",
 			"text": "hostHint",
@@ -13,28 +24,74 @@
 			"xl": 12
 		},
 		"hostAddress": {
-			"type": "text",
+			"type": "selectSendTo",
+			"command": "discoverHosts",
+			"jsonData": "{\"bindAddress\": \"${data.bindAddress}\"}",
+			"alsoDependsOn": [
+				"bindAddress"
+			],
+			"noTranslation": true,
+			"manual": true,
 			"label": "hostAddress",
 			"help": "hostAddressHelp",
 			"placeholder": "10.10.11.31",
 			"newLine": true,
 			"xs": 12,
 			"sm": 12,
-			"md": 6,
-			"lg": 4,
-			"xl": 4
+			"md": 8,
+			"lg": 6,
+			"xl": 5
 		},
 		"bindAddress": {
-			"type": "text",
+			"type": "selectSendTo",
+			"command": "listInterfaces",
+			"noTranslation": true,
+			"manual": true,
 			"label": "bindAddress",
 			"help": "bindAddressHelp",
 			"placeholder": "10.10.11.30",
 			"newLine": true,
 			"xs": 12,
 			"sm": 12,
-			"md": 6,
-			"lg": 4,
-			"xl": 4
+			"md": 8,
+			"lg": 6,
+			"xl": 5
+		},
+		"_test": {
+			"type": "sendTo",
+			"command": "testConnection",
+			"jsonData": "{\"hostAddress\": \"${data.hostAddress}\", \"bindAddress\": \"${data.bindAddress}\"}",
+			"label": "testConnection",
+			"variant": "contained",
+			"showProcess": true,
+			"timeout": 30000,
+			"newLine": true,
+			"xs": 12,
+			"sm": 12,
+			"md": 12,
+			"lg": 12,
+			"xl": 12
+		},
+		"_helpHeader": {
+			"type": "header",
+			"text": "headerHelp",
+			"size": 3,
+			"newLine": true,
+			"xs": 12,
+			"sm": 12,
+			"md": 12,
+			"lg": 12,
+			"xl": 12
+		},
+		"_help": {
+			"type": "staticText",
+			"text": "helpText",
+			"newLine": true,
+			"xs": 12,
+			"sm": 12,
+			"md": 12,
+			"lg": 12,
+			"xl": 12
 		}
 	}
 }

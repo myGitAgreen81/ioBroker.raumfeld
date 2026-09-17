@@ -21,6 +21,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var os = __toESM(require("node:os"));
 var utils = __toESM(require("@iobroker/adapter-core"));
 var import_deviceDirectory = require("./lib/deviceDirectory");
 var import_discovery = require("./lib/discovery");
@@ -55,6 +56,7 @@ class Raumfeld extends utils.Adapter {
     });
     this.on("ready", this.onReady.bind(this));
     this.on("stateChange", this.onStateChange.bind(this));
+    this.on("message", this.onMessage.bind(this));
     this.on("unload", this.onUnload.bind(this));
   }
   async onReady() {
@@ -880,6 +882,113 @@ class Raumfeld extends utils.Adapter {
       return;
     }
     await ((_a = this.hostService) == null ? void 0 : _a.connectRoomToZone(room.udn, target.zoneUdn));
+  }
+  /**
+   * Beantwortet Anfragen der Konfigurationsseite.
+   *
+   * Die Seite kann den Adapter fragen, statt den Nutzer raten zu lassen: sie
+   * laesst ihn nach Geraeten suchen, bietet die eigenen Netzkarten zur
+   * Auswahl an und prueft die eingetragene Verbindung. Das funktioniert auch,
+   * wenn der Adapter selbst keinen Host gefunden hat - die Instanz laeuft
+   * dann zwar ohne Verbindung weiter, nimmt aber Nachrichten entgegen. Genau
+   * in dieser Lage braucht man die Suche am dringendsten.
+   *
+   * @param obj - Die eingegangene Nachricht.
+   * @returns Nichts.
+   */
+  async onMessage(obj) {
+    if (typeof obj !== "object" || !obj.command) {
+      return;
+    }
+    const answer = (payload) => {
+      if (obj.callback) {
+        this.sendTo(obj.from, obj.command, payload, obj.callback);
+      }
+    };
+    try {
+      switch (obj.command) {
+        case "discoverHosts":
+          answer(await this.suggestHosts());
+          return;
+        case "listInterfaces":
+          answer(this.suggestInterfaces());
+          return;
+        case "testConnection":
+          answer({ result: await this.describeConnection(obj.message) });
+          return;
+        default:
+          this.log.debug(`Unbekannter Befehl aus der Oberflaeche: ${obj.command}`);
+          answer({ error: `Unbekannter Befehl ${obj.command}` });
+      }
+    } catch (err) {
+      answer({ error: asMessage(err) });
+    }
+  }
+  /**
+   * Sucht Raumfeld-Hosts und bietet sie zur Auswahl an.
+   *
+   * @returns Die gefundenen Adressen als Auswahlliste.
+   */
+  async suggestHosts() {
+    var _a;
+    const bindAddress = String((_a = this.config.bindAddress) != null ? _a : "").trim() || void 0;
+    const result = await (0, import_discovery.discover)(bindAddress);
+    const options = result.hostCandidates.map((address) => ({
+      label: `${address} (Host)`,
+      value: address
+    }));
+    for (const address of result.deviceAddresses) {
+      if (!result.hostCandidates.includes(address)) {
+        options.push({ label: `${address} (Lautsprecher)`, value: address });
+      }
+    }
+    return [{ label: "automatisch suchen", value: "" }, ...options];
+  }
+  /**
+   * Listet die eigenen Netzkarten auf.
+   *
+   * @returns Die verfuegbaren IPv4-Adressen als Auswahlliste.
+   */
+  suggestInterfaces() {
+    const options = [{ label: "automatisch waehlen", value: "" }];
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+      for (const address of addresses != null ? addresses : []) {
+        if (address.family === "IPv4" && !address.internal) {
+          options.push({ label: `${address.address} (${name})`, value: address.address });
+        }
+      }
+    }
+    return options;
+  }
+  /**
+   * Prueft, was unter den eingetragenen Angaben erreichbar ist.
+   *
+   * @param message - Die Angaben der Konfigurationsseite.
+   * @returns Ein lesbarer Bericht fuer die Oberflaeche.
+   */
+  async describeConnection(message) {
+    var _a, _b, _c, _d;
+    const config = message != null ? message : {};
+    const bindAddress = String((_a = config.bindAddress) != null ? _a : "").trim() || void 0;
+    let address = String((_b = config.hostAddress) != null ? _b : "").trim();
+    if (address === "") {
+      const found = await (0, import_discovery.discover)(bindAddress);
+      if (found.hostCandidates.length === 0) {
+        return "Kein Host gefunden. SSDP wird zwischen Netzsegmenten nicht weitergereicht - steht der Adapter woanders als die Lautsprecher, muss die Adresse hier eingetragen werden.";
+      }
+      address = found.hostCandidates[0];
+    }
+    const probe = new import_hostService.RaumfeldHostService({ address });
+    const info = await probe.fetchHostInfo();
+    const zones = await probe.fetchZones();
+    const devices = await probe.fetchDevices();
+    const rooms = zones.allRooms.map((room) => room.name).join(", ") || "keine";
+    return [
+      `Host ${address} antwortet.`,
+      `Geraet: ${(_c = info.hostName) != null ? _c : "unbekannt"}, steht im Raum ${(_d = info.roomName) != null ? _d : "unbekannt"}.`,
+      `${zones.numRooms} Raeume (${rooms}), ${zones.zones.length} Zonen.`,
+      `${devices.length} Geraete im System.`
+    ].join("\n");
   }
   /**
    * Wird beim Beenden gerufen. Die Rueckmeldung muss in jedem Fall erfolgen,

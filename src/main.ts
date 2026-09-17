@@ -2,6 +2,8 @@
  * Created with @iobroker/create-adapter v3.1.5
  */
 
+import * as os from 'node:os';
+
 import * as utils from '@iobroker/adapter-core';
 import { readServices } from './lib/deviceDirectory';
 import { discover } from './lib/discovery';
@@ -52,6 +54,7 @@ class Raumfeld extends utils.Adapter {
 		});
 		this.on('ready', this.onReady.bind(this));
 		this.on('stateChange', this.onStateChange.bind(this));
+		this.on('message', this.onMessage.bind(this));
 		this.on('unload', this.onUnload.bind(this));
 	}
 
@@ -987,6 +990,126 @@ class Raumfeld extends utils.Adapter {
 			return;
 		}
 		await this.hostService?.connectRoomToZone(room.udn, target.zoneUdn);
+	}
+
+	/**
+	 * Beantwortet Anfragen der Konfigurationsseite.
+	 *
+	 * Die Seite kann den Adapter fragen, statt den Nutzer raten zu lassen: sie
+	 * laesst ihn nach Geraeten suchen, bietet die eigenen Netzkarten zur
+	 * Auswahl an und prueft die eingetragene Verbindung. Das funktioniert auch,
+	 * wenn der Adapter selbst keinen Host gefunden hat - die Instanz laeuft
+	 * dann zwar ohne Verbindung weiter, nimmt aber Nachrichten entgegen. Genau
+	 * in dieser Lage braucht man die Suche am dringendsten.
+	 *
+	 * @param obj - Die eingegangene Nachricht.
+	 * @returns Nichts.
+	 */
+	private async onMessage(obj: ioBroker.Message): Promise<void> {
+		if (typeof obj !== 'object' || !obj.command) {
+			return;
+		}
+
+		const answer = (payload: unknown): void => {
+			if (obj.callback) {
+				this.sendTo(obj.from, obj.command, payload as ioBroker.MessagePayload, obj.callback);
+			}
+		};
+
+		try {
+			switch (obj.command) {
+				case 'discoverHosts':
+					answer(await this.suggestHosts());
+					return;
+				case 'listInterfaces':
+					answer(this.suggestInterfaces());
+					return;
+				case 'testConnection':
+					answer({ result: await this.describeConnection(obj.message) });
+					return;
+				default:
+					this.log.debug(`Unbekannter Befehl aus der Oberflaeche: ${obj.command}`);
+					answer({ error: `Unbekannter Befehl ${obj.command}` });
+			}
+		} catch (err) {
+			answer({ error: asMessage(err) });
+		}
+	}
+
+	/**
+	 * Sucht Raumfeld-Hosts und bietet sie zur Auswahl an.
+	 *
+	 * @returns Die gefundenen Adressen als Auswahlliste.
+	 */
+	private async suggestHosts(): Promise<{ label: string; value: string }[]> {
+		const bindAddress = String(this.config.bindAddress ?? '').trim() || undefined;
+		const result = await discover(bindAddress);
+
+		const options = result.hostCandidates.map(address => ({
+			label: `${address} (Host)`,
+			value: address,
+		}));
+		for (const address of result.deviceAddresses) {
+			if (!result.hostCandidates.includes(address)) {
+				options.push({ label: `${address} (Lautsprecher)`, value: address });
+			}
+		}
+		// Die leere Auswahl bleibt moeglich: ohne Eintrag sucht der Adapter bei
+		// jedem Start selbst, was der Normalfall bleiben soll.
+		return [{ label: 'automatisch suchen', value: '' }, ...options];
+	}
+
+	/**
+	 * Listet die eigenen Netzkarten auf.
+	 *
+	 * @returns Die verfuegbaren IPv4-Adressen als Auswahlliste.
+	 */
+	private suggestInterfaces(): { label: string; value: string }[] {
+		const options: { label: string; value: string }[] = [{ label: 'automatisch waehlen', value: '' }];
+		for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+			for (const address of addresses ?? []) {
+				if (address.family === 'IPv4' && !address.internal) {
+					options.push({ label: `${address.address} (${name})`, value: address.address });
+				}
+			}
+		}
+		return options;
+	}
+
+	/**
+	 * Prueft, was unter den eingetragenen Angaben erreichbar ist.
+	 *
+	 * @param message - Die Angaben der Konfigurationsseite.
+	 * @returns Ein lesbarer Bericht fuer die Oberflaeche.
+	 */
+	private async describeConnection(message: unknown): Promise<string> {
+		const config = (message ?? {}) as { hostAddress?: string; bindAddress?: string };
+		const bindAddress = String(config.bindAddress ?? '').trim() || undefined;
+		let address = String(config.hostAddress ?? '').trim();
+
+		if (address === '') {
+			const found = await discover(bindAddress);
+			if (found.hostCandidates.length === 0) {
+				return (
+					'Kein Host gefunden. SSDP wird zwischen Netzsegmenten nicht weitergereicht - steht der ' +
+					'Adapter woanders als die Lautsprecher, muss die Adresse hier eingetragen werden.'
+				);
+			}
+			address = found.hostCandidates[0];
+		}
+
+		const probe = new RaumfeldHostService({ address });
+		const info = await probe.fetchHostInfo();
+		const zones = await probe.fetchZones();
+		const devices = await probe.fetchDevices();
+
+		const rooms = zones.allRooms.map(room => room.name).join(', ') || 'keine';
+		return [
+			`Host ${address} antwortet.`,
+			`Geraet: ${info.hostName ?? 'unbekannt'}, steht im Raum ${info.roomName ?? 'unbekannt'}.`,
+			`${zones.numRooms} Raeume (${rooms}), ${zones.zones.length} Zonen.`,
+			`${devices.length} Geraete im System.`,
+		].join('\n');
 	}
 
 	/**
