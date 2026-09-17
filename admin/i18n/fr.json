@@ -1,5 +1,8 @@
 {
 	"raumfeld adapter settings": "Paramètres d'adaptateur pour raumfeld",
-	"option1": "option1",
-	"option2": "option2"
+	"hostHint": "The adapter finds the host by itself as long as it sits in the same network segment as the speakers. SSDP is not forwarded between segments - in that case enter the addresses here.",
+	"hostAddress": "Address of the Raumfeld host",
+	"hostAddressHelp": "Leave empty for automatic discovery. The host is the device offering the ConfigDevice, recognisable by the open port 47365.",
+	"bindAddress": "Source address for discovery",
+	"bindAddressHelp": "Only needed when the machine has several network cards. Enter the address of the card that sits in the speakers' segment."
 }

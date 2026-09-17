@@ -43,8 +43,17 @@
 			"uk": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
 			"zh-cn": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher UPnP 和 Raumfeld-Host-Webservice"
 		},
-		"authors": ["Alexander Grün <alex.gruen@gmail.com>"],
-		"keywords": ["raumfeld", "teufel", "multiroom", "upnp", "audio", "speaker"],
+		"authors": [
+			"Alexander Grün <alex.gruen@gmail.com>"
+		],
+		"keywords": [
+			"raumfeld",
+			"teufel",
+			"multiroom",
+			"upnp",
+			"audio",
+			"speaker"
+		],
 		"licenseInformation": {
 			"type": "free",
 			"license": "MIT"
@@ -76,8 +85,8 @@
 		]
 	},
 	"native": {
-		"option1": true,
-		"option2": "42"
+		"hostAddress": "",
+		"bindAddress": ""
 	},
 	"objects": [],
 	"instanceObjects": [
@@ -99,6 +108,58 @@
 				"read": true,
 				"write": false,
 				"def": false
+			},
+			"native": {}
+		},
+		{
+			"_id": "info.hostAddress",
+			"type": "state",
+			"common": {
+				"role": "info.ip",
+				"name": "Adresse des Raumfeld-Hosts",
+				"type": "string",
+				"read": true,
+				"write": false,
+				"def": ""
+			},
+			"native": {}
+		},
+		{
+			"_id": "info.hostName",
+			"type": "state",
+			"common": {
+				"role": "text",
+				"name": "Name des Host-Geraets",
+				"type": "string",
+				"read": true,
+				"write": false,
+				"def": ""
+			},
+			"native": {}
+		},
+		{
+			"_id": "info.hostRoom",
+			"type": "state",
+			"common": {
+				"role": "text",
+				"name": "Raum, in dem der Host steht",
+				"type": "string",
+				"read": true,
+				"write": false,
+				"def": ""
+			},
+			"native": {}
+		},
+		{
+			"_id": "info.zones",
+			"type": "state",
+			"common": {
+				"role": "json",
+				"name": "Aktuelle Zonenaufteilung als JSON",
+				"type": "string",
+				"read": true,
+				"write": false,
+				"def": "[]"
 			},
 			"native": {}
 		}

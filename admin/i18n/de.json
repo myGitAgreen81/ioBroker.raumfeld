@@ -1,5 +1,8 @@
 {
 	"raumfeld adapter settings": "Adaptereinstellungen für raumfeld",
-	"option1": "Option1",
-	"option2": "Option2"
+	"hostHint": "Der Adapter findet den Host selbst, sofern er im selben Netzsegment steht wie die Lautsprecher. SSDP wird zwischen Segmenten nicht weitergereicht - in dem Fall die Adressen hier eintragen.",
+	"hostAddress": "Adresse des Raumfeld-Hosts",
+	"hostAddressHelp": "Leer lassen fuer die automatische Suche. Der Host ist das Geraet mit dem ConfigDevice, erkennbar am offenen Port 47365.",
+	"bindAddress": "Quelladresse fuer die Suche",
+	"bindAddressHelp": "Nur noetig, wenn der Rechner mehrere Netzkarten hat. Hier die Adresse der Karte eintragen, die im Segment der Lautsprecher liegt."
 }

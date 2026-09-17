@@ -4,8 +4,10 @@
 declare global {
 	namespace ioBroker {
 		interface AdapterConfig {
-			option1: boolean;
-			option2: string;
+			/** Adresse des Raumfeld-Hosts; leer bedeutet automatische Suche. */
+			hostAddress: string;
+			/** Quelladresse fuer die SSDP-Suche bei mehreren Netzkarten. */
+			bindAddress: string;
 		}
 	}
 }

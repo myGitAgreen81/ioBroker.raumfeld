@@ -2,14 +2,21 @@
  * Created with @iobroker/create-adapter v3.1.5
  */
 
-// The adapter-core module gives you access to the core ioBroker functions
-// you need to create an adapter
 import * as utils from '@iobroker/adapter-core';
-
-// Load your modules here, e.g.:
-// import * as fs from 'fs';
+import { discover } from './lib/discovery';
+import { RaumfeldHostService } from './lib/hostService';
+import { roomIdFromName } from './lib/raumfeldXml';
+import type { RaumfeldRoom, ZoneConfiguration } from './lib/types';
 
 class Raumfeld extends utils.Adapter {
+	private hostService?: RaumfeldHostService;
+
+	/**
+	 * Raum-UDN zu Objekt-ID. Ueber diese Zuordnung faellt auf, wenn ein Raum in
+	 * der Raumfeld-App umbenannt wurde: die UDN bleibt, die ID aendert sich.
+	 */
+	private readonly roomIds = new Map<string, string>();
+
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
 			...options,
@@ -17,88 +24,253 @@ class Raumfeld extends utils.Adapter {
 		});
 		this.on('ready', this.onReady.bind(this));
 		this.on('stateChange', this.onStateChange.bind(this));
-		// this.on('objectChange', this.onObjectChange.bind(this));
-		// this.on('message', this.onMessage.bind(this));
 		this.on('unload', this.onUnload.bind(this));
 	}
 
-	/**
-	 * Is called when databases are connected and adapter received configuration.
-	 */
 	private async onReady(): Promise<void> {
-		// Initialize your adapter here
+		await this.ensureInfoObjects();
+		await this.setState('info.connection', false, true);
 
-		// Reset the connection indicator during startup
-		this.setState('info.connection', false, true);
+		const address = await this.resolveHostAddress();
+		if (!address) {
+			// Ohne Host gibt es keine Zonen, keine Raeume und nichts zu steuern.
+			// Das ist kein Absturz, sondern ein Zustand, den der Nutzer beheben
+			// muss - deshalb eine klare Meldung statt eines Fehlers.
+			this.log.error(
+				'Kein Raumfeld-Host gefunden. Laeuft der Host-Lautsprecher, und steht der Adapter im selben ' +
+					'Netzsegment? SSDP wird zwischen Segmenten nicht weitergereicht - andernfalls die Adresse ' +
+					'des Hosts in den Einstellungen eintragen.',
+			);
+			return;
+		}
 
-		// The adapters config (in the instance object everything under the attribute "native") is accessible via
-		// this.config:
-		this.log.debug('config option1: ${this.config.option1}');
-		this.log.debug('config option2: ${this.config.option2}');
+		this.log.info(`Raumfeld-Host auf ${address}`);
+		await this.setStateAsync('info.hostAddress', address, true);
 
-		/*
-		For every state in the system there has to be also an object of type state
-		Here a simple template for a boolean variable named "testVariable"
-		Because every adapter instance uses its own unique namespace variable names can't collide with other adapters variables
-
-		IMPORTANT: State roles should be chosen carefully based on the state's purpose.
-		           Please refer to the state roles documentation for guidance:
-		           https://www.iobroker.net/#en/documentation/dev/stateroles.md
-		*/
-		await this.setObjectNotExistsAsync('testVariable', {
-			type: 'state',
-			common: {
-				name: 'testVariable',
-				type: 'boolean',
-				role: 'indicator',
-				read: true,
-				write: true,
+		this.hostService = new RaumfeldHostService({
+			address,
+			log: {
+				debug: message => this.log.debug(message),
+				info: message => this.log.info(message),
+				warn: message => this.log.warn(message),
+				error: message => this.log.error(message),
 			},
-			native: {},
 		});
 
-		// In order to get state updates, you need to subscribe to them. The following line adds a subscription for our variable we have created above.
-		this.subscribeStates('testVariable');
-		// You can also add a subscription for multiple states. The following line watches all states starting with "lights."
-		// this.subscribeStates('lights.*');
-		// Or, if you really must, you can also watch all states. Don't do this if you don't need to. Otherwise this will cause a lot of unnecessary load on the system:
-		// this.subscribeStates('*');
+		this.hostService.on('connected', () => {
+			this.log.info('Verbindung zum Host steht, Zonenueberwachung laeuft');
+			void this.setState('info.connection', true, true);
+			void this.readHostInfo();
+		});
 
-		/*
-			setState examples
-			you will notice that each setState will cause the stateChange event to fire (because of above subscribeStates cmd)
-		*/
-		// the variable testVariable is set to true as command (ack=false)
-		await this.setState('testVariable', true);
+		this.hostService.on('disconnected', reason => {
+			this.log.warn(`Verbindung zum Host verloren: ${reason}`);
+			void this.setState('info.connection', false, true);
+		});
 
-		// same thing, but the value is flagged "ack"
-		// ack should be always set to true if the value is received from or acknowledged from the target system
-		await this.setState('testVariable', { val: true, ack: true });
+		this.hostService.on('zones', config => {
+			void this.applyZoneConfiguration(config).catch((err: unknown) => {
+				this.log.error(`Zonenaufteilung konnte nicht uebernommen werden: ${asMessage(err)}`);
+			});
+		});
 
-		// same thing, but the state is deleted after 30s (getState will return null afterwards)
-		await this.setState('testVariable', { val: true, ack: true, expire: 30 });
-
-		// examples for the checkPassword/checkGroup functions
-		const pwdResult = await this.checkPasswordAsync('admin', 'iobroker');
-		this.log.info(`check user admin pw iobroker: ${JSON.stringify(pwdResult)}`);
-
-		const groupResult = await this.checkGroupAsync('admin', 'admin');
-		this.log.info(`check group user admin group admin: ${JSON.stringify(groupResult)}`);
+		this.hostService.start();
 	}
 
 	/**
-	 * Is called when adapter shuts down - callback has to be called under any circumstances!
+	 * Legt die Objekte des info-Zweiges an.
 	 *
-	 * @param callback - Callback function
+	 * Sie stehen zwar auch als instanceObjects in der io-package.json, aber die
+	 * werden nur beim Einrichten einer Instanz ausgewertet. Eine Instanz, die
+	 * es vor dem Hinzufuegen dieser Datenpunkte schon gab, haette sie sonst
+	 * nie - und jeder Schreibzugriff quittierte das mit der Warnung
+	 * "has no existing object".
+	 */
+	private async ensureInfoObjects(): Promise<void> {
+		await this.defineState('info.hostAddress', 'Adresse des Raumfeld-Hosts', 'string', 'info.ip', false);
+		await this.defineState('info.hostName', 'Name des Host-Geraets', 'string', 'text', false);
+		await this.defineState('info.hostRoom', 'Raum, in dem der Host steht', 'string', 'text', false);
+		await this.defineState('info.zones', 'Aktuelle Zonenaufteilung als JSON', 'string', 'json', false);
+	}
+
+	/**
+	 * Ermittelt die Adresse des Hosts: entweder aus den Einstellungen oder per
+	 * SSDP-Suche nach dem ConfigDevice, das es im System nur einmal gibt.
+	 */
+	private async resolveHostAddress(): Promise<string | undefined> {
+		const configured = String(this.config.hostAddress ?? '').trim();
+		if (configured.length > 0) {
+			this.log.debug(`Host-Adresse aus den Einstellungen: ${configured}`);
+			return configured;
+		}
+
+		const bindAddress = String(this.config.bindAddress ?? '').trim() || undefined;
+		this.log.debug(`Suche den Host per SSDP${bindAddress ? `, gesendet von ${bindAddress}` : ''} ...`);
+
+		try {
+			const result = await discover(bindAddress);
+			if (result.hostCandidates.length > 1) {
+				this.log.warn(
+					`Mehrere Geraete melden ein ConfigDevice (${result.hostCandidates.join(', ')}). ` +
+						'Das erste wird verwendet; bei Problemen die Adresse fest eintragen.',
+				);
+			}
+			if (result.hostCandidates.length > 0) {
+				return result.hostCandidates[0];
+			}
+
+			this.log.debug(
+				`Kein ConfigDevice gefunden, gefundene Raumfeld-Geraete: ${result.deviceAddresses.join(', ') || 'keine'}`,
+			);
+		} catch (err) {
+			this.log.warn(`SSDP-Suche fehlgeschlagen: ${asMessage(err)}`);
+		}
+		return undefined;
+	}
+
+	/** Liest die unveraenderlichen Angaben des Hosts einmal aus. */
+	private async readHostInfo(): Promise<void> {
+		if (!this.hostService) {
+			return;
+		}
+		try {
+			const info = await this.hostService.fetchHostInfo();
+			await this.setStateAsync('info.hostName', info.hostName ?? '', true);
+			await this.setStateAsync('info.hostRoom', info.roomName ?? '', true);
+		} catch (err) {
+			this.log.debug(`getHostInfo nicht lesbar: ${asMessage(err)}`);
+		}
+	}
+
+	/**
+	 * Uebertraegt eine neue Zonenaufteilung in den Objektbaum.
+	 *
+	 * Raeume, die verschwunden sind, werden nicht geloescht, sondern auf
+	 * online=false gesetzt. Ein Lautsprecher im Tiefschlaf oder mit kurzzeitig
+	 * gestoertem WLAN faellt aus getZones heraus - wuerde der Adapter dabei
+	 * Objekte loeschen, waeren mit ihnen auch die Verlaufsdaten weg.
+	 *
+	 * @param config - Die vom Host gemeldete Zonenaufteilung.
+	 */
+	private async applyZoneConfiguration(config: ZoneConfiguration): Promise<void> {
+		this.log.debug(
+			`Zonenaufteilung: ${config.zones.length} Zonen, ${config.unassignedRooms.length} einzelne Raeume`,
+		);
+
+		await this.setStateAsync(
+			'info.zones',
+			JSON.stringify(config.zones.map(zone => ({ udn: zone.udn, rooms: zone.rooms.map(room => room.name) }))),
+			true,
+		);
+
+		const present = new Set<string>();
+		for (const room of config.allRooms) {
+			const id = await this.ensureRoom(room);
+			present.add(id);
+			await this.writeRoomStates(id, room, true);
+		}
+
+		for (const [udn, id] of this.roomIds) {
+			if (!present.has(id)) {
+				this.log.debug(`Raum ${id} (${udn}) ist derzeit nicht gemeldet`);
+				await this.setStateAsync(`rooms.${id}.online`, false, true);
+			}
+		}
+	}
+
+	/**
+	 * Legt die Objekte eines Raumes an, falls sie noch fehlen.
+	 *
+	 * @param room - Der Raum, so wie der Host ihn meldet.
+	 */
+	private async ensureRoom(room: RaumfeldRoom): Promise<string> {
+		const id = roomIdFromName(room.name);
+
+		const previous = this.roomIds.get(room.udn);
+		if (previous !== undefined && previous !== id) {
+			this.log.warn(
+				`Raum "${previous}" heisst jetzt "${room.name}". Der alte Zweig rooms.${previous} bleibt stehen ` +
+					'und kann von Hand geloescht werden.',
+			);
+		}
+		this.roomIds.set(room.udn, id);
+
+		await this.setObjectNotExistsAsync(`rooms.${id}`, {
+			type: 'device',
+			common: { name: room.name },
+			// Die UDN ist die verlaessliche Kennung des Raumes und wird fuer
+			// jeden Befehl an den Host gebraucht.
+			native: { udn: room.udn },
+		});
+
+		await this.defineState(`rooms.${id}.name`, 'Name des Raumes', 'string', 'text', false);
+		await this.defineState(`rooms.${id}.online`, 'Raum wird gemeldet', 'boolean', 'indicator.reachable', false);
+		await this.defineState(`rooms.${id}.powerState`, 'Betriebszustand', 'string', 'text', false);
+		await this.defineState(`rooms.${id}.zone`, 'Zone, in der der Raum steckt', 'string', 'text', false);
+		await this.defineState(
+			`rooms.${id}.spotifyConnect`,
+			'Spotify Connect angemeldet',
+			'boolean',
+			'indicator',
+			false,
+		);
+
+		return id;
+	}
+
+	/**
+	 * @param id - Objekt-ID des Raumes.
+	 * @param room - Der Raum, so wie der Host ihn meldet.
+	 * @param online - Ob der Raum in der aktuellen Meldung enthalten war.
+	 */
+	private async writeRoomStates(id: string, room: RaumfeldRoom, online: boolean): Promise<void> {
+		await this.setStateAsync(`rooms.${id}.name`, room.name, true);
+		await this.setStateAsync(`rooms.${id}.online`, online, true);
+		// Fehlt powerState, ist der Raum wach - der Host laesst das Attribut
+		// dann weg, statt ACTIVE zu schreiben.
+		await this.setStateAsync(`rooms.${id}.powerState`, room.powerState ?? 'ACTIVE', true);
+		await this.setStateAsync(`rooms.${id}.zone`, room.zoneUdn ?? '', true);
+		await this.setStateAsync(
+			`rooms.${id}.spotifyConnect`,
+			room.renderers.some(renderer => renderer.spotifyConnect),
+			true,
+		);
+	}
+
+	/**
+	 * Kurzform fuer die immer gleiche Objektdefinition eines Zustands.
+	 *
+	 * @param id - Objekt-ID des Zustands, ohne den Namensraum des Adapters.
+	 * @param name - Anzeigename in der Oberflaeche.
+	 * @param type - Datentyp des Wertes.
+	 * @param role - ioBroker-Rolle, die der Oberflaeche sagt, was der Wert bedeutet.
+	 * @param write - Ob der Datenpunkt beschrieben werden darf.
+	 * @returns Nichts; das Objekt wird nur angelegt, wenn es noch fehlt.
+	 */
+	private async defineState(
+		id: string,
+		name: string,
+		type: ioBroker.CommonType,
+		role: string,
+		write: boolean,
+	): Promise<void> {
+		await this.setObjectNotExistsAsync(id, {
+			type: 'state',
+			common: { name, type, role, read: true, write },
+			native: {},
+		});
+	}
+
+	/**
+	 * Wird beim Beenden gerufen. Die Rueckmeldung muss in jedem Fall erfolgen,
+	 * sonst wartet der Controller bis zum Zwangsabbruch.
+	 *
+	 * @param callback - Meldet dem Controller, dass aufgeraeumt wurde.
 	 */
 	private onUnload(callback: () => void): void {
 		try {
-			// Here you must clear all timeouts or intervals that may still be active
-			// clearTimeout(timeout1);
-			// clearTimeout(timeout2);
-			// ...
-			// clearInterval(interval1);
-
+			this.hostService?.stop();
+			this.hostService = undefined;
 			callback();
 		} catch (error) {
 			this.log.error(`Error during unloading: ${(error as Error).message}`);
@@ -106,61 +278,29 @@ class Raumfeld extends utils.Adapter {
 		}
 	}
 
-	// If you need to react to object changes, uncomment the following block and the corresponding line in the constructor.
-	// You also need to subscribe to the objects with `this.subscribeObjects`, similar to `this.subscribeStates`.
-	// /**
-	//  * Is called if a subscribed object changes
-	//  */
-	// private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
-	// 	if (obj) {
-	// 		// The object was changed
-	// 		this.log.info(`object ${id} changed: ${JSON.stringify(obj)}`);
-	// 	} else {
-	// 		// The object was deleted
-	// 		this.log.info(`object ${id} deleted`);
-	// 	}
-	// }
-
 	/**
-	 * Is called if a subscribed state changes
-	 *
 	 * @param id - State ID
 	 * @param state - State object
 	 */
 	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
-		if (state) {
-			// The state was changed
-			this.log.info(`state ${id} changed: ${state.val} (ack = ${state.ack})`);
-
-			if (state.ack === false) {
-				// This is a command from the user (e.g., from the UI or other adapter)
-				// and should be processed by the adapter
-				this.log.info(`User command received for ${id}: ${state.val}`);
-
-				// TODO: Add your control logic here
-			}
-		} else {
-			// The object was deleted or the state value has expired
-			this.log.info(`state ${id} deleted`);
+		if (!state || state.ack) {
+			return;
 		}
+		// Schreibbare Datenpunkte kommen mit der Anbindung der Renderer dazu;
+		// bis dahin gibt es hier nichts zu tun.
+		this.log.debug(`Befehl fuer ${id} erhalten: ${String(state.val)}`);
 	}
-	// If you need to accept messages in your adapter, uncomment the following block and the corresponding line in the constructor.
-	// /**
-	//  * Some message was sent to this instance over message box. Used by email, pushover, text2speech, ...
-	//  * Using this method requires "common.messagebox" property to be set to true in io-package.json
-	//  */
-	//
-	// private onMessage(obj: ioBroker.Message): void {
-	// 	if (typeof obj === 'object' && obj.message) {
-	// 		if (obj.command === 'send') {
-	// 			// e.g. send email or pushover or whatever
-	// 			this.log.info('send command');
-	// 			// Send response in callback if required
-	// 			if (obj.callback) this.sendTo(obj.from, obj.command, 'Message received', obj.callback);
-	// 		}
-	// 	}
-	// }
 }
+
+/**
+ * Holt eine lesbare Meldung aus einem unbekannten Fehlerwert.
+ *
+ * @param err - Der abgefangene Wert, der nicht zwingend ein Error ist.
+ */
+function asMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
 if (require.main !== module) {
 	// Export the constructor in compact mode
 	module.exports = (options: Partial<utils.AdapterOptions> | undefined) => new Raumfeld(options);

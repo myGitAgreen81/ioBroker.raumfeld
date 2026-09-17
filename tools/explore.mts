@@ -47,8 +47,7 @@ const xml = new XMLParser({
 	attributeNamePrefix: '@',
 	// Einzelne Kinder sollen trotzdem als Liste ankommen, sonst muss jede
 	// Auswertung zwischen "ein Dienst" und "mehrere Dienste" unterscheiden.
-	isArray: (name) =>
-		['service', 'device', 'action', 'argument', 'stateVariable', 'allowedValue'].includes(name),
+	isArray: name => ['service', 'device', 'action', 'argument', 'stateVariable', 'allowedValue'].includes(name),
 });
 
 interface ActionArgument {
@@ -102,7 +101,11 @@ interface EndpointResult {
 	error?: string;
 }
 
-/** Holt eine URL als Text und bricht bei Zeitueberschreitung sauber ab. */
+/**
+ * Holt eine URL als Text und bricht bei Zeitueberschreitung sauber ab.
+ * @param url
+ * @param timeoutMs
+ */
 async function get(url: string, timeoutMs = 8000): Promise<string> {
 	const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
 	if (!res.ok) {
@@ -114,6 +117,10 @@ async function get(url: string, timeoutMs = 8000): Promise<string> {
 /**
  * Schickt eine SOAP-Aktion an einen Dienst. Wird hier nur lesend benutzt,
  * um das Inhaltsverzeichnis des MediaServers anzusehen.
+ * @param controlUrl
+ * @param serviceType
+ * @param action
+ * @param args
  */
 async function soap(
 	controlUrl: string,
@@ -147,6 +154,7 @@ async function soap(
  * SSDP-Suche. Es werden mehrere Suchziele geschickt, weil Raumfeld-Geraete
  * je nach Rolle unterschiedlich antworten und "ssdp:all" allein nicht bei
  * jedem Geraet alle Beschreibungen zutage foerdert.
+ * @param timeoutMs
  */
 function discover(timeoutMs = 5000): Promise<Map<string, Set<string>>> {
 	const targets = [
@@ -162,7 +170,7 @@ function discover(timeoutMs = 5000): Promise<Map<string, Set<string>>> {
 		const found = new Map<string, Set<string>>();
 		const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
-		socket.on('error', (err) => {
+		socket.on('error', err => {
 			socket.close();
 			reject(err);
 		});
@@ -206,29 +214,34 @@ function discover(timeoutMs = 5000): Promise<Map<string, Set<string>>> {
 	});
 }
 
-/** Loest eine in der Beschreibung angegebene, meist relative URL auf. */
+/**
+ * Loest eine in der Beschreibung angegebene, meist relative URL auf.
+ * @param base
+ * @param relative
+ */
 function resolveUrl(base: string, relative: string): string {
 	return new URL(relative, base).toString();
 }
 
-/** Liest die SCPD-Beschreibung eines Dienstes: Aktionen und Zustandsvariablen. */
+/**
+ * Liest die SCPD-Beschreibung eines Dienstes: Aktionen und Zustandsvariablen.
+ * @param scpdUrl
+ */
 async function readScpd(scpdUrl: string): Promise<Pick<ServiceInfo, 'actions' | 'stateVariables'>> {
 	const doc = xml.parse(await get(scpdUrl));
 	const scpd = doc.scpd ?? {};
 
-	const stateVariables: StateVariableInfo[] = (scpd.serviceStateTable?.stateVariable ?? []).map(
-		(variable: any) => ({
-			name: String(variable.name),
-			dataType: String(variable.dataType),
-			sendEvents: variable['@sendEvents'] === 'yes',
-			allowedValues: variable.allowedValueList?.allowedValue?.map(String),
-		}),
-	);
+	const stateVariables: StateVariableInfo[] = (scpd.serviceStateTable?.stateVariable ?? []).map((variable: any) => ({
+		name: String(variable.name),
+		dataType: String(variable.dataType),
+		sendEvents: variable['@sendEvents'] === 'yes',
+		allowedValues: variable.allowedValueList?.allowedValue?.map(String),
+	}));
 
 	// Der Datentyp eines Arguments steht nicht am Argument, sondern an der
 	// verknuepften Zustandsvariablen - genau das brauchen wir spaeter, um die
 	// ioBroker-Datenpunkte richtig zu typisieren.
-	const typeOf = new Map(stateVariables.map((variable) => [variable.name, variable.dataType]));
+	const typeOf = new Map(stateVariables.map(variable => [variable.name, variable.dataType]));
 
 	const actions: ActionInfo[] = (scpd.actionList?.action ?? []).map((action: any) => ({
 		name: String(action.name),
@@ -243,7 +256,11 @@ async function readScpd(scpdUrl: string): Promise<Pick<ServiceInfo, 'actions' | 
 	return { actions, stateVariables };
 }
 
-/** Liest eine Geraetebeschreibung samt aller darin genannten Dienste. */
+/**
+ * Liest eine Geraetebeschreibung samt aller darin genannten Dienste.
+ * @param address
+ * @param location
+ */
 async function readDevice(address: string, location: string): Promise<DeviceInfo[]> {
 	const doc = xml.parse(await get(location));
 	const result: DeviceInfo[] = [];
@@ -285,9 +302,7 @@ async function readDevice(address: string, location: string): Promise<DeviceInfo
 			modelNumber: dev.modelNumber ? String(dev.modelNumber) : undefined,
 			serialNumber: dev.serialNumber ? String(dev.serialNumber) : undefined,
 			udn: String(dev.UDN ?? ''),
-			protocolVersion: dev['raumfeld:protocolVersion']
-				? String(dev['raumfeld:protocolVersion'])
-				: undefined,
+			protocolVersion: dev['raumfeld:protocolVersion'] ? String(dev['raumfeld:protocolVersion']) : undefined,
 			hardwareType: dev['raumfeld:hardwareType'] ? String(dev['raumfeld:hardwareType']) : undefined,
 			services,
 		});
@@ -301,6 +316,7 @@ async function readDevice(address: string, location: string): Promise<DeviceInfo
  * Sitzungs-URL umgeleitet; fetch folgt dem von selbst. Ueber genau diese
  * Sitzungs-URLs laeuft spaeter das Long-Polling, mit dem Raumfeld
  * Zonenaenderungen meldet.
+ * @param address
  */
 async function readHostService(address: string): Promise<Record<string, EndpointResult>> {
 	// Nur diese drei Endpunkte existieren tatsaechlich. Ausprobiert und mit
@@ -322,7 +338,10 @@ async function readHostService(address: string): Promise<Record<string, Endpoint
 	return result;
 }
 
-/** Sieht die oberste Ebene des MediaServer-Inhaltsverzeichnisses an. */
+/**
+ * Sieht die oberste Ebene des MediaServer-Inhaltsverzeichnisses an.
+ * @param service
+ */
 async function browseRoot(service: ServiceInfo): Promise<string> {
 	return await soap(service.controlUrl, service.serviceType, 'Browse', {
 		ObjectID: '0',
@@ -334,13 +353,22 @@ async function browseRoot(service: ServiceInfo): Promise<string> {
 	});
 }
 
-/** Kuerzt einen UPnP-Typ auf den sprechenden Teil, z.B. "AVTransport". */
+/**
+ * Kuerzt einen UPnP-Typ auf den sprechenden Teil, z.B. "AVTransport".
+ * @param urn
+ */
 function shortType(urn: string): string {
 	const parts = urn.split(':');
 	return parts.length >= 2 ? parts[parts.length - 2] : urn;
 }
 
-/** Baut den lesbaren Bericht. */
+/**
+ * Baut den lesbaren Bericht.
+ * @param devices
+ * @param hostAddress
+ * @param hostService
+ * @param contentRoot
+ */
 function buildReport(
 	devices: DeviceInfo[],
 	hostAddress: string | undefined,
@@ -388,7 +416,7 @@ function buildReport(
 				continue;
 			}
 
-			const evented = svc.stateVariables.filter((variable) => variable.sendEvents);
+			const evented = svc.stateVariables.filter(variable => variable.sendEvents);
 			lines.push(
 				`- ${svc.actions.length} Aktionen, ${svc.stateVariables.length} Zustandsvariablen, davon ${evented.length} mit Ereignismeldung`,
 				'',
@@ -400,8 +428,8 @@ function buildReport(
 				for (const action of svc.actions) {
 					const format = (direction: string): string =>
 						action.arguments
-							.filter((arg) => arg.direction === direction)
-							.map((arg) => `${arg.name}: ${arg.dataType ?? '?'}`)
+							.filter(arg => arg.direction === direction)
+							.map(arg => `${arg.name}: ${arg.dataType ?? '?'}`)
 							.join(', ') || '—';
 					lines.push(`| \`${action.name}\` | ${format('in')} | ${format('out')} |`);
 				}
@@ -410,7 +438,7 @@ function buildReport(
 
 			if (evented.length > 0) {
 				lines.push(
-					`**Meldet Aenderungen fuer:** ${evented.map((v) => `\`${v.name}\` (${v.dataType})`).join(', ')}`,
+					`**Meldet Aenderungen fuer:** ${evented.map(v => `\`${v.name}\` (${v.dataType})`).join(', ')}`,
 					'',
 				);
 			}
@@ -438,6 +466,9 @@ function buildReport(
 	return `${lines.join('\n')}\n`;
 }
 
+/**
+ *
+ */
 async function main(): Promise<void> {
 	console.log(`Suche Raumfeld-Geraete, gesendet von ${SOURCE_IP} ...`);
 	const found = await discover();
@@ -468,7 +499,7 @@ async function main(): Promise<void> {
 	// Im selben Segment stehen auch Fremdgeraete (Yamaha, Harmony); nur die
 	// Raumfeld-Geraete gehoeren in den Bericht.
 	const raumfeld = devices.filter(
-		(dev) =>
+		dev =>
 			dev.modelName?.includes('Teufel') ||
 			dev.deviceType.includes('raumfeld') ||
 			dev.friendlyName.includes('Raumfeld'),
@@ -477,7 +508,7 @@ async function main(): Promise<void> {
 	// Der Host ist das Geraet, dessen Webservice auf 47365 antwortet.
 	let hostAddress: string | undefined;
 	let hostService: Record<string, EndpointResult> = {};
-	for (const address of new Set(raumfeld.map((dev) => dev.address))) {
+	for (const address of new Set(raumfeld.map(dev => dev.address))) {
 		try {
 			await get(`http://${address}:${HOST_SERVICE_PORT}/getZones`, 4000);
 			hostAddress = address;
@@ -495,8 +526,8 @@ async function main(): Promise<void> {
 
 	let contentRoot: string | undefined;
 	const contentDirectory = raumfeld
-		.flatMap((dev) => dev.services)
-		.find((svc) => svc.serviceType.includes('ContentDirectory'));
+		.flatMap(dev => dev.services)
+		.find(svc => svc.serviceType.includes('ContentDirectory'));
 	if (contentDirectory) {
 		try {
 			contentRoot = await browseRoot(contentDirectory);
