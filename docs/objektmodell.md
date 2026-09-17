@@ -115,12 +115,21 @@ raumfeld.0
 │
 └── media
     ├── browse              string    wo   ObjectID, Vorgabe "0"
+    ├── browseId            string    ro   zuletzt geöffnete Sammlung
+    ├── browseParent        string    ro   übergeordnete Sammlung, zum Zurückgehen
     ├── browseResult        string    ro   JSON der Kindelemente
+    ├── browseTotal         number    ro   Anzahl im Zweig
     ├── search              string    wo   Suchbegriff
+    ├── searchIn            string    rw   Zweig, in dem gesucht wird
     ├── searchResult        string    ro   JSON
     ├── indexerStatus       string    ro
     └── sources             string    ro   JSON der obersten Ebene
 ```
+
+Zum Abspielen eines Bibliothekseintrags gibt es an jedem Raum
+`transport.playObject`: dort wird eine Kennung wie
+`0/DemoTracks/GettingStarted/rock` hineingeschrieben, der Adapter holt die
+Abspieladresse und die Titelangaben und startet die Wiedergabe.
 
 ## Woher jeder Wert kommt
 
@@ -189,10 +198,20 @@ Skript versehentlich auslösen kann, ist ein zu großes Risiko für einen Datenp
 
 ### Aus ContentDirectory des MediaServers
 
-21 Aktionen. Für die erste Fassung wird nur lesend zugegriffen: `Browse` und `Search`
-füllen `media.browseResult` und `media.searchResult`, `GetIndexerStatus` den Status.
-Die oberste Ebene der Bibliothek liefert derzeit: My Music, Playlists, TuneIn, Spotify,
-Line-in, Teufel Favourites, Zones, Renderers, Demo Tracks.
+21 Aktionen. Für die erste Fassung wird nur lesend zugegriffen. Die oberste Ebene der
+Bibliothek liefert: My Music, Playlists, TuneIn, Spotify, Line-in, Teufel Favourites,
+Zones, Renderers, Demo Tracks. Die Kennungen sind sprechende Pfade wie
+`0/My Music/Albums`, was das Anspringen eines bestimmten Zweiges einfach macht.
+
+**Der Server sucht nicht.** Seine `Search`-Aktion nimmt ein `SearchCriteria` entgegen und
+`GetSearchCapabilities` meldet `dc:title`, aber ausgewertet wird die Bedingung nicht:
+nachgemessen an den vier Demo-Titeln lieferten „Rock", „Electro" und ein frei erfundener
+Begriff jeweils dieselbe vollständige Liste. Der Adapter filtert deshalb selbst, über
+Titel und Interpret. Das hat eine Grenze, die man kennen muss: gesucht wird nur unter den
+unmittelbaren Kindern des angegebenen Zweiges, nicht in der Tiefe.
+
+**`0/RadioTime` — also TuneIn — antwortet mit HTTP 500.** Der Dienst dahinter existiert
+offenbar nicht mehr. Das ist kein Fehler des Adapters.
 
 ## Wie die Werte aktuell bleiben
 

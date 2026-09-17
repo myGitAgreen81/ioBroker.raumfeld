@@ -27,11 +27,15 @@ var import_discovery = require("./lib/discovery");
 var import_events = require("./lib/events");
 var import_gena = require("./lib/gena");
 var import_hostService = require("./lib/hostService");
+var import_library = require("./lib/library");
 var import_raumfeldXml = require("./lib/raumfeldXml");
 var import_renderer = require("./lib/renderer");
 class Raumfeld extends utils.Adapter {
   hostService;
   gena;
+  library;
+  /** Adresse der Beschreibung des MediaServers, an dem die Bibliothek haengt. */
+  libraryLocation;
   /** Raum-UDN zu Objekt-ID, um Umbenennungen zu erkennen. */
   roomIds = /* @__PURE__ */ new Map();
   /** Objekt-ID zu den Laufzeitangaben des Raumes. */
@@ -55,6 +59,7 @@ class Raumfeld extends utils.Adapter {
   }
   async onReady() {
     await this.ensureInfoObjects();
+    await this.ensureMediaObjects();
     await this.setState("info.connection", false, true);
     const address = await this.resolveHostAddress();
     if (!address) {
@@ -92,6 +97,7 @@ class Raumfeld extends utils.Adapter {
       });
     });
     this.subscribeStates("rooms.*");
+    this.subscribeStates("media.*");
     this.hostService.start();
   }
   /**
@@ -141,6 +147,53 @@ class Raumfeld extends utils.Adapter {
     await this.defineState("info.hostName", "Name des Host-Geraets", "string", "text", false);
     await this.defineState("info.hostRoom", "Raum, in dem der Host steht", "string", "text", false);
     await this.defineState("info.zones", "Aktuelle Zonenaufteilung als JSON", "string", "json", false);
+  }
+  /**
+   * Legt die Objekte des media-Zweiges an.
+   *
+   * @returns Nichts.
+   */
+  async ensureMediaObjects() {
+    await this.defineState("media.browse", 'Sammlung oeffnen, Vorgabe "0"', "string", "text", true);
+    await this.defineState("media.browseId", "Zuletzt geoeffnete Sammlung", "string", "text", false);
+    await this.defineState("media.browseParent", "Uebergeordnete Sammlung", "string", "text", false);
+    await this.defineState("media.browseResult", "Inhalt als JSON", "string", "json", false);
+    await this.defineState("media.browseTotal", "Anzahl der Eintraege im Zweig", "number", "value", false);
+    await this.defineState("media.search", "Suchbegriff", "string", "text", true);
+    await this.defineState("media.searchIn", "Zweig, in dem gesucht wird", "string", "text", true);
+    await this.defineState("media.searchResult", "Treffer als JSON", "string", "json", false);
+    await this.defineState("media.sources", "Oberste Ebene der Bibliothek als JSON", "string", "json", false);
+    await this.defineState("media.indexerStatus", "Stand der Bibliothekserfassung", "string", "text", false);
+  }
+  /**
+   * Verbindet die Bibliothek des MediaServers.
+   *
+   * Der MediaServer laeuft auf demselben Geraet wie der Host. Seine Ports
+   * wechseln wie bei allen Raumfeld-Diensten mit jedem Neustart, deshalb
+   * wird die Verbindung neu aufgebaut, sobald die Beschreibung woanders liegt.
+   *
+   * @param location - Adresse der Geraetebeschreibung des MediaServers.
+   * @returns Nichts.
+   */
+  async setupLibrary(location) {
+    if (this.libraryLocation === location && this.library) {
+      return;
+    }
+    try {
+      const service = (await (0, import_deviceDirectory.readServices)(location)).get("ContentDirectory");
+      if (!service) {
+        this.log.warn("Der MediaServer bietet kein ContentDirectory an");
+        return;
+      }
+      this.library = new import_library.LibraryClient(service);
+      this.libraryLocation = location;
+      this.log.debug(`Bibliothek verbunden: ${service.controlUrl}`);
+      const root = await this.library.browse("0");
+      await this.setState("media.sources", JSON.stringify(root.entries.map(toPlainEntry)), true);
+      await this.setState("media.indexerStatus", await this.library.indexerStatus(), true);
+    } catch (err) {
+      this.log.warn(`Bibliothek nicht erreichbar: ${asMessage(err)}`);
+    }
   }
   /**
    * Ermittelt die Adresse des Hosts: entweder aus den Einstellungen oder per
@@ -254,6 +307,9 @@ class Raumfeld extends utils.Adapter {
     try {
       for (const device of await this.hostService.fetchDevices()) {
         this.deviceLocations.set(device.udn, device.location);
+        if (device.type.includes("MediaServer")) {
+          await this.setupLibrary(device.location);
+        }
       }
     } catch (err) {
       this.log.debug(`listDevices nicht lesbar: ${asMessage(err)}`);
@@ -506,6 +562,13 @@ class Raumfeld extends utils.Adapter {
     );
     await this.defineState(`rooms.${id}.transport.seek`, "Springen nach h:mm:ss", "string", "media.seek", true);
     await this.defineState(`rooms.${id}.transport.playUri`, "Adresse abspielen", "string", "media.url", true);
+    await this.defineState(
+      `rooms.${id}.transport.playObject`,
+      "Eintrag aus der Bibliothek abspielen",
+      "string",
+      "text",
+      true
+    );
     for (const [command, label] of [
       ["play", "Abspielen"],
       ["pause", "Anhalten"],
@@ -610,6 +673,11 @@ class Raumfeld extends utils.Adapter {
    */
   async handleCommand(id, state) {
     var _a;
+    const media = /\.media\.(.+)$/.exec(id);
+    if (media) {
+      await this.handleMediaCommand(id, media[1], state);
+      return;
+    }
     const match = /\.rooms\.([^.]+)\.(.+)$/.exec(id);
     if (!match) {
       return;
@@ -681,8 +749,87 @@ class Raumfeld extends utils.Adapter {
         await transport.play();
         await this.setState(id, "", true);
         return;
+      case "transport.playObject":
+        await this.playObject(transport, String(value));
+        await this.setState(id, "", true);
+        return;
       default:
         this.log.debug(`Fuer ${path} gibt es keinen Befehl`);
+    }
+  }
+  /**
+   * Spielt einen Eintrag der Bibliothek ab.
+   *
+   * Die Abspieladresse steht nur am Objekt selbst, nicht in der Liste seiner
+   * Geschwister - deshalb wird sie hier eigens geholt. Mitgeschickt wird das
+   * vollstaendige DIDL-Lite, damit der Lautsprecher Titel, Interpret und
+   * Titelbild anzeigen kann.
+   *
+   * @param transport - Der Renderer, der abspielen soll.
+   * @param objectId - Kennung des Eintrags aus der Bibliothek.
+   * @returns Nichts.
+   */
+  async playObject(transport, objectId) {
+    if (!this.library) {
+      this.log.warn("Die Bibliothek ist nicht verbunden");
+      return;
+    }
+    const found = await this.library.metadata(objectId);
+    if (!found) {
+      this.log.warn(`In der Bibliothek gibt es keinen Eintrag "${objectId}"`);
+      return;
+    }
+    if (found.entry.uri === "") {
+      this.log.warn(
+        `"${found.entry.title}" ist eine Sammlung ohne eigene Abspieladresse. Einzelne Titel lassen sich abspielen, ganze Sammlungen erst mit der Warteschlange.`
+      );
+      return;
+    }
+    await transport.setUri(found.entry.uri, found.didl);
+    await transport.play();
+    this.log.info(`Spiele "${found.entry.title}"`);
+  }
+  /**
+   * Fuehrt einen Befehl des media-Zweiges aus.
+   *
+   * @param id - Vollstaendige Objekt-ID des Datenpunkts.
+   * @param path - Der Teil hinter "media.".
+   * @param state - Der geschriebene Zustand.
+   * @returns Nichts.
+   */
+  async handleMediaCommand(id, path, state) {
+    var _a, _b, _c, _d;
+    if (!this.library) {
+      this.log.warn("Die Bibliothek ist nicht verbunden");
+      return;
+    }
+    const value = String((_a = state.val) != null ? _a : "");
+    if (path === "browse") {
+      const objectId = value.trim() === "" ? "0" : value.trim();
+      const result = await this.library.browse(objectId);
+      await this.setState("media.browseId", objectId, true);
+      const own = await this.library.metadata(objectId);
+      await this.setState("media.browseParent", (_b = own == null ? void 0 : own.entry.parentId) != null ? _b : "", true);
+      await this.setState("media.browseResult", JSON.stringify(result.entries.map(toPlainEntry)), true);
+      await this.setState("media.browseTotal", result.total, true);
+      await this.setState(id, objectId, true);
+      this.log.debug(`${objectId}: ${result.entries.length} von ${result.total} Eintraegen gelesen`);
+      return;
+    }
+    if (path === "search") {
+      if (value.trim() === "") {
+        await this.setState("media.searchResult", "[]", true);
+        return;
+      }
+      const container = String((_d = (_c = await this.getStateAsync("media.searchIn")) == null ? void 0 : _c.val) != null ? _d : "").trim() || "0";
+      const result = await this.library.search(container, value.trim());
+      await this.setState("media.searchResult", JSON.stringify(result.entries.map(toPlainEntry)), true);
+      await this.setState(id, value, true);
+      this.log.debug(`Suche nach "${value}" in ${container}: ${result.total} Treffer`);
+      return;
+    }
+    if (path === "searchIn") {
+      await this.setState(id, value, true);
     }
   }
   /**
@@ -754,6 +901,23 @@ class Raumfeld extends utils.Adapter {
 }
 function asMessage(err) {
   return err instanceof Error ? err.message : String(err);
+}
+function toPlainEntry(entry) {
+  const plain = {
+    id: entry.id,
+    title: entry.title,
+    kind: entry.kind,
+    playable: entry.uri !== ""
+  };
+  for (const [key, value] of Object.entries(entry)) {
+    if (key === "id" || key === "title" || key === "kind") {
+      continue;
+    }
+    if (value !== "" && value !== 0) {
+      plain[key] = value;
+    }
+  }
+  return plain;
 }
 if (require.main !== module) {
   module.exports = (options) => new Raumfeld(options);

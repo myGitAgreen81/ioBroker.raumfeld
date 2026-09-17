@@ -131,3 +131,31 @@ export interface ToneFilter {
 	/** Hoehen. */
 	high: number;
 }
+
+/** Ein Eintrag der Musikbibliothek, Sammlung oder Titel. */
+export interface LibraryEntry {
+	/** Kennung, bei Raumfeld ein sprechender Pfad wie "0/My Music/Albums". */
+	id: string;
+	/** Kennung der uebergeordneten Sammlung. */
+	parentId: string;
+	/** Ob es sich um eine Sammlung oder einen einzelnen Eintrag handelt. */
+	kind: 'container' | 'item';
+	/** Anzeigename. */
+	title: string;
+	/** UPnP-Klasse, etwa object.item.audioItem.musicTrack. */
+	upnpClass: string;
+	/** Raumfelds Angabe der Quelle, etwa "Spotify" oder "DemoTracks". */
+	section: string;
+	/** Anzahl der enthaltenen Eintraege, nur bei Sammlungen belegt. */
+	childCount: number;
+	/** Interpret. */
+	artist: string;
+	/** Album. */
+	album: string;
+	/** Adresse des Titelbildes. */
+	albumArt: string;
+	/** Spieldauer, sofern das Geraet sie nennt. */
+	duration: string;
+	/** Abspieladresse; bei Sammlungen leer. */
+	uri: string;
+}
