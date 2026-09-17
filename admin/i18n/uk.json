@@ -8,5 +8,7 @@
 	"headerConnection": "Connection to the Raumfeld system",
 	"testConnection": "Test connection",
 	"headerHelp": "When nothing is found",
-	"helpText": "The host is the device running the system management, recognisable by the open port 47365. While it is switched off the whole system reports nothing - Spotify Connect stops listing the speakers as well. If the adapter sits in a different network segment, the devices must also be able to reach it back, otherwise they report no changes."
+	"helpText": "The host is the device running the system management, recognisable by the open port 47365. While it is switched off the whole system reports nothing - Spotify Connect stops listing the speakers as well. If the adapter sits in a different network segment, the devices must also be able to reach it back, otherwise they report no changes.",
+	"eventPort": "Port for device events",
+	"eventPortHelp": "0 lets the system choose. With a firewall between adapter and speakers, set a fixed port here - a rule can only be written for a known port. The devices open the connection towards the adapter themselves."
 }

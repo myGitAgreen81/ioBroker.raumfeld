@@ -8,6 +8,8 @@ declare global {
 			hostAddress: string;
 			/** Quelladresse fuer die SSDP-Suche bei mehreren Netzkarten. */
 			bindAddress: string;
+			/** Fester Port fuer den Ereignis-Rueckkanal; 0 waehlt das System. */
+			eventPort: number;
 		}
 	}
 }

@@ -141,7 +141,12 @@ class Raumfeld extends utils.Adapter {
 				debug: message => this.log.debug(message),
 				warn: message => this.log.warn(message),
 			});
-			await this.gena.start(local);
+			// Ein fester Port ist noetig, sobald eine Firewall zwischen Adapter
+			// und Lautsprechern steht: eine Regel laesst sich nur auf einen
+			// bekannten Port schreiben. 0 bedeutet, das Betriebssystem waehlt -
+			// das ist der bequeme Fall, wenn alles im selben Segment steht.
+			const eventPort = Number(this.config.eventPort ?? 0);
+			await this.gena.start(local, Number.isFinite(eventPort) ? eventPort : 0);
 			this.log.info(`Ereignisse werden entgegengenommen auf ${this.gena.callbackBase}`);
 			return true;
 		} catch (err) {
@@ -420,6 +425,36 @@ class Raumfeld extends utils.Adapter {
 		} catch (err) {
 			this.log.debug(`Geraetebeschreibung von ${udn} nicht lesbar: ${asMessage(err)}`);
 			return undefined;
+		}
+	}
+
+	/**
+	 * Liest nach einem Befehl den tatsaechlichen Wert zurueck und bestaetigt ihn.
+	 *
+	 * Im Normalfall meldet das Geraet die Aenderung von selbst, und der
+	 * Datenpunkt wird ueber das Ereignis bestaetigt. Erreichen die Geraete den
+	 * Adapter aber nicht - etwa weil eine Firewall zwischen ihnen steht -,
+	 * bliebe der geschriebene Wert fuer immer unbestaetigt und die Oberflaeche
+	 * zeigte einen offenen Befehl an. Das Zurueckfragen kostet einen Aufruf und
+	 * macht den Adapter auch ohne Rueckkanal brauchbar.
+	 *
+	 * @param roomId - Objekt-ID des Raumes.
+	 * @param control - Bedienschnittstelle des Renderers.
+	 * @returns Nichts.
+	 */
+	private async confirmFromDevice(roomId: string, control?: RendererControl): Promise<void> {
+		if (!control?.has('RenderingControl')) {
+			return;
+		}
+		try {
+			await this.setState(`rooms.${roomId}.volume`, await control.volume(), true);
+			await this.setState(`rooms.${roomId}.mute`, await control.mute(), true);
+			const filter = await control.filter();
+			await this.setState(`rooms.${roomId}.equalizer.low`, filter.low, true);
+			await this.setState(`rooms.${roomId}.equalizer.mid`, filter.mid, true);
+			await this.setState(`rooms.${roomId}.equalizer.high`, filter.high, true);
+		} catch (err) {
+			this.log.debug(`Rueckfrage an ${roomId} fehlgeschlagen: ${asMessage(err)}`);
 		}
 	}
 
@@ -796,9 +831,11 @@ class Raumfeld extends utils.Adapter {
 		switch (path) {
 			case 'volume':
 				await own?.setVolume(Number(value));
+				await this.confirmFromDevice(roomId, own);
 				return;
 			case 'mute':
 				await own?.setMute(Boolean(value));
+				await this.confirmFromDevice(roomId, own);
 				return;
 			case 'standby':
 				if (value) {
@@ -811,6 +848,7 @@ class Raumfeld extends utils.Adapter {
 			case 'equalizer.mid':
 			case 'equalizer.high':
 				await this.applyFilter(room, path.split('.')[1] as 'low' | 'mid' | 'high', Number(value));
+				await this.confirmFromDevice(roomId, own);
 				return;
 			case 'group.joinRoom':
 				await this.joinRoom(room, String(value));

@@ -8,5 +8,7 @@
 	"headerConnection": "Verbindung zum Raumfeld-System",
 	"testConnection": "Verbindung prüfen",
 	"headerHelp": "Wenn nichts gefunden wird",
-	"helpText": "Der Host ist das Gerät mit der Systemverwaltung, erkennbar am offenen Port 47365. Ist er ausgeschaltet, meldet das gesamte System nichts - auch Spotify Connect zeigt dann keine Lautsprecher mehr an. Steht der Adapter in einem anderen Netzsegment, müssen die Geräte ihn außerdem zurück erreichen können, sonst melden sie keine Änderungen."
+	"helpText": "Der Host ist das Gerät mit der Systemverwaltung, erkennbar am offenen Port 47365. Ist er ausgeschaltet, meldet das gesamte System nichts - auch Spotify Connect zeigt dann keine Lautsprecher mehr an. Steht der Adapter in einem anderen Netzsegment, müssen die Geräte ihn außerdem zurück erreichen können, sonst melden sie keine Änderungen.",
+	"eventPort": "Port für Geräteereignisse",
+	"eventPortHelp": "0 überlässt die Wahl dem System. Steht eine Firewall zwischen Adapter und Lautsprechern, hier einen festen Port eintragen — nur darauf lässt sich eine Freigabe schreiben. Die Geräte bauen die Verbindung von sich aus zum Adapter auf."
 }

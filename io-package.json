@@ -87,7 +87,8 @@
 	},
 	"native": {
 		"hostAddress": "",
-		"bindAddress": ""
+		"bindAddress": "",
+		"eventPort": 0
 	},
 	"objects": [],
 	"instanceObjects": [
