@@ -973,7 +973,8 @@ class Raumfeld extends utils.Adapter {
 	 * Fuegt einen Raum der Zone eines anderen Raumes hinzu.
 	 *
 	 * @param room - Der Raum, der wandern soll.
-	 * @param targetName - Name des Zielraums.
+	 * @param targetName - Name des Zielraums. Gehoert dieser noch keiner Zone
+	 *   an, wird zuerst eine fuer ihn gebildet.
 	 * @returns Nichts.
 	 */
 	private async joinRoom(room: RoomRuntime, targetName: string): Promise<void> {
@@ -983,14 +984,31 @@ class Raumfeld extends utils.Adapter {
 			this.log.warn(`Zielraum "${targetName}" ist nicht bekannt`);
 			return;
 		}
-		if (target.zoneUdn === undefined || target.zoneUdn === '') {
-			this.log.warn(
-				`"${targetName}" gehoert derzeit keiner Zone an. Dort muss erst etwas abgespielt werden, ` +
-					'damit eine Zone entsteht, der sich andere Raeume anschliessen koennen.',
-			);
+		if (!this.hostService) {
 			return;
 		}
-		await this.hostService?.connectRoomToZone(room.udn, target.zoneUdn);
+		if (target.udn === room.udn) {
+			this.log.warn('Ein Raum kann sich nicht selbst beitreten');
+			return;
+		}
+
+		let zoneUdn = target.zoneUdn;
+		if (zoneUdn === undefined || zoneUdn === '') {
+			// Der Zielraum gehoert noch keiner Zone an. Ein connectRoomToZone
+			// mit leerem zoneUDN legt eine an - nachgemessen an der Anlage, und
+			// zwar ohne dass dafuer etwas abgespielt werden muesste. Die neue
+			// Kennung wird anschliessend direkt abgefragt, statt auf die
+			// Zonenmeldung zu warten, die erst Bruchteile spaeter eintrifft.
+			await this.hostService.connectRoomToZone(target.udn);
+			const fresh = await this.hostService.fetchZones();
+			zoneUdn = fresh.allRooms.find(entry => entry.udn === target.udn)?.zoneUdn;
+		}
+
+		if (zoneUdn === undefined || zoneUdn === '') {
+			this.log.warn(`Fuer "${targetName}" liess sich keine Zone bilden`);
+			return;
+		}
+		await this.hostService.connectRoomToZone(room.udn, zoneUdn);
 	}
 
 	/**

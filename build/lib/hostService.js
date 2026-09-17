@@ -104,9 +104,11 @@ class RaumfeldHostService extends import_node_events.EventEmitter {
    * die antworten alle mit 404.
    *
    * @param roomUdn - UDN des Raumes.
-   * @param zoneUdn - Ziel-Zone. Ohne Angabe soll der Raum in eine eigene Zone
-   *   wandern, was zugleich das Loesen aus einer Gruppe waere. Das ist noch
-   *   nicht an echter Hardware bestaetigt.
+   * @param zoneUdn - Ziel-Zone. **Ohne Angabe** setzt der Host den Raum in
+   *   eine neue, eigene Zone - das ist zugleich der Weg, einen Raum aus einer
+   *   Gruppe zu loesen und der Weg, ueberhaupt eine erste Zone zu bilden. An
+   *   der Anlage nachgemessen: aus zwei Raeumen ohne Zone entstand so eine
+   *   Zone mit einem Raum, ohne dass dafuer etwas abgespielt werden musste.
    * @returns Nichts; ein Fehler wird geworfen, wenn der Host ablehnt.
    */
   async connectRoomToZone(roomUdn, zoneUdn) {

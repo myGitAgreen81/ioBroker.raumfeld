@@ -865,7 +865,8 @@ class Raumfeld extends utils.Adapter {
    * Fuegt einen Raum der Zone eines anderen Raumes hinzu.
    *
    * @param room - Der Raum, der wandern soll.
-   * @param targetName - Name des Zielraums.
+   * @param targetName - Name des Zielraums. Gehoert dieser noch keiner Zone
+   *   an, wird zuerst eine fuer ihn gebildet.
    * @returns Nichts.
    */
   async joinRoom(room, targetName) {
@@ -876,13 +877,24 @@ class Raumfeld extends utils.Adapter {
       this.log.warn(`Zielraum "${targetName}" ist nicht bekannt`);
       return;
     }
-    if (target.zoneUdn === void 0 || target.zoneUdn === "") {
-      this.log.warn(
-        `"${targetName}" gehoert derzeit keiner Zone an. Dort muss erst etwas abgespielt werden, damit eine Zone entsteht, der sich andere Raeume anschliessen koennen.`
-      );
+    if (!this.hostService) {
       return;
     }
-    await ((_a = this.hostService) == null ? void 0 : _a.connectRoomToZone(room.udn, target.zoneUdn));
+    if (target.udn === room.udn) {
+      this.log.warn("Ein Raum kann sich nicht selbst beitreten");
+      return;
+    }
+    let zoneUdn = target.zoneUdn;
+    if (zoneUdn === void 0 || zoneUdn === "") {
+      await this.hostService.connectRoomToZone(target.udn);
+      const fresh = await this.hostService.fetchZones();
+      zoneUdn = (_a = fresh.allRooms.find((entry) => entry.udn === target.udn)) == null ? void 0 : _a.zoneUdn;
+    }
+    if (zoneUdn === void 0 || zoneUdn === "") {
+      this.log.warn(`Fuer "${targetName}" liess sich keine Zone bilden`);
+      return;
+    }
+    await this.hostService.connectRoomToZone(room.udn, zoneUdn);
   }
   /**
    * Beantwortet Anfragen der Konfigurationsseite.

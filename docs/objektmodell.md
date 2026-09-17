@@ -247,11 +247,20 @@ Bewusst ausgelassen, damit der erste Wurf überschaubar bleibt:
 
 ## Offene Punkte
 
-**Wie entsteht eine neue Zone?** `connectRoomToZone?zoneUDN=…&roomUDN=…` ist der einzige
-vorhandene Befehl und antwortet mit `200`. Naheliegend ist, dass ein leeres `zoneUDN` den
-Raum in eine eigene neue Zone setzt und damit zugleich als „aus der Gruppe lösen" wirkt.
-Das ist **noch nicht bestätigt** und gehört beim Umsetzen von `group.leave` als Erstes
-ausprobiert.
+**Wie Zonen entstehen und vergehen — beantwortet.** `connectRoomToZone` ist der einzige
+vorhandene Befehl, und ein **leeres `zoneUDN`** setzt den Raum in eine neue, eigene Zone.
+Damit erledigt derselbe Aufruf zwei Dinge: das Lösen aus einer Gruppe und das Bilden der
+ersten Zone überhaupt. An der Anlage nachgemessen — aus zwei Räumen ohne Zone entstand
+eine Zone mit einem Raum, ohne dass dafür etwas abgespielt werden musste.
+
+Zwei Beobachtungen dazu:
+
+- **Die Zonen-UDN wechselt bei jeder Änderung der Zusammensetzung.** Beim Lösen eines
+  Raumes bekommt er eine neue Zone mit neuer Kennung, während die verbliebene Zone ihre
+  behält. Das bestätigt die Entscheidung, den Objektbaum an den Räumen aufzuhängen.
+- **Zonen überleben die Bereitschaft.** Beide Lautsprecher schlafen zu schicken löst die
+  Zone nicht auf. Ein Raum ohne Zone tritt offenbar nur nach einem Neustart des Systems
+  auf — genau der Zustand, in dem dieses Projekt angefangen hat.
 
 **Kanäle bei RenderingControl.** Alle Lautstärkeaktionen nehmen ein `Channel`-Argument.
 Ob das One S außer `Master` weitere Kanäle kennt, steht in der SCPD-Beschreibung als
