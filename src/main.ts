@@ -11,6 +11,7 @@ import { durationToSeconds, parseDidlLite, parseLastChange } from './lib/events'
 import { GenaListener, localAddressTowards } from './lib/gena';
 import { HOST_SERVICE_PORT, RaumfeldHostService } from './lib/hostService';
 import { LibraryClient } from './lib/library';
+import { containerPlayUri } from './lib/playback';
 import { roomIdFromName } from './lib/raumfeldXml';
 import { describeSystem } from './lib/report';
 import { RendererControl } from './lib/renderer';
@@ -34,6 +35,8 @@ class Raumfeld extends utils.Adapter {
 	private library?: LibraryClient;
 	/** Adresse der Beschreibung des MediaServers, an dem die Bibliothek haengt. */
 	private libraryLocation?: string;
+	/** Kennung des MediaServers; wird zum Abspielen ganzer Sammlungen gebraucht. */
+	private mediaServerUdn?: string;
 
 	/** Raum-UDN zu Objekt-ID, um Umbenennungen zu erkennen. */
 	private readonly roomIds = new Map<string, string>();
@@ -341,6 +344,7 @@ class Raumfeld extends utils.Adapter {
 			for (const device of await this.hostService.fetchDevices()) {
 				this.deviceLocations.set(device.udn, device.location);
 				if (device.type.includes('MediaServer')) {
+					this.mediaServerUdn = device.udn;
 					await this.setupLibrary(device.location);
 				}
 			}
@@ -465,10 +469,18 @@ class Raumfeld extends utils.Adapter {
 	 */
 	private async writePosition(roomId: string, control: RendererControl): Promise<void> {
 		const position = await control.positionInfo();
-		await this.setState(`rooms.${roomId}.transport.position`, position.position, true);
-		await this.setState(`rooms.${roomId}.transport.positionSec`, durationToSeconds(position.position), true);
-		await this.setState(`rooms.${roomId}.transport.duration`, position.duration, true);
-		await this.setState(`rooms.${roomId}.transport.durationSec`, durationToSeconds(position.duration), true);
+		// Raumfeld antwortet fuer gestreamte Inhalte mit Platzhaltern statt mit
+		// Zeiten: "NOT_IMPLEMENTED", wenn gar nichts laeuft, und "0:00:00" als
+		// Dauer, wenn es die Laenge nicht kennt. Beides als Zeitangabe
+		// durchzureichen waere eine Falschaussage; leer ist ehrlicher.
+		const usable = (value: string): string => (value === 'NOT_IMPLEMENTED' || value === '0:00:00' ? '' : value);
+
+		const elapsed = usable(position.position);
+		const total = usable(position.duration);
+		await this.setState(`rooms.${roomId}.transport.position`, elapsed, true);
+		await this.setState(`rooms.${roomId}.transport.positionSec`, durationToSeconds(elapsed), true);
+		await this.setState(`rooms.${roomId}.transport.duration`, total, true);
+		await this.setState(`rooms.${roomId}.transport.durationSec`, durationToSeconds(total), true);
 	}
 
 	/**
@@ -812,6 +824,13 @@ class Raumfeld extends utils.Adapter {
 				break;
 		}
 
+		// Abspielen laeuft bei Raumfeld ueber die Zone. Steht der Raum in
+		// keiner, wird sie hier gebildet - sonst gaebe es keinen
+		// Zonen-Renderer, der eine ganze Sammlung annehmen koennte.
+		if (path === 'transport.playObject' || path === 'transport.playUri') {
+			await this.ensureZone(room);
+		}
+
 		const transport = await this.transportControl(room);
 		if (!transport) {
 			this.log.warn(`Kein erreichbarer Renderer fuer ${roomId}`);
@@ -873,17 +892,23 @@ class Raumfeld extends utils.Adapter {
 			this.log.warn(`In der Bibliothek gibt es keinen Eintrag "${objectId}"`);
 			return;
 		}
-		if (found.entry.uri === '') {
-			// Sammlungen tragen keine Abspieladresse. Raumfeld spielt sie ueber
-			// seine Warteschlangen ab, und die sind noch nicht angebunden.
-			this.log.warn(
-				`"${found.entry.title}" ist eine Sammlung ohne eigene Abspieladresse. ` +
-					'Einzelne Titel lassen sich abspielen, ganze Sammlungen erst mit der Warteschlange.',
-			);
+		// Sammlungen tragen keine eigene Abspieladresse. Statt eine
+		// Warteschlange zusammenzubauen, bekommt der Renderer eine
+		// dlna-playcontainer-Adresse und arbeitet die Sammlung selbst ab.
+		const uri =
+			found.entry.uri !== ''
+				? found.entry.uri
+				: this.mediaServerUdn !== undefined
+					? containerPlayUri(this.mediaServerUdn, found.entry.id)
+					: '';
+		if (uri === '') {
+			this.log.warn(`"${found.entry.title}" ist eine Sammlung, und die Kennung des MediaServers ist unbekannt.`);
 			return;
 		}
 
-		await transport.setUri(found.entry.uri, found.didl);
+		// Bei einer Sammlung werden keine Metadaten mitgeschickt: der Renderer
+		// holt sich die Angaben zu jedem Titel selbst.
+		await transport.setUri(uri, found.entry.uri !== '' ? found.didl : '');
 		await transport.play();
 		this.log.info(`Spiele "${found.entry.title}"`);
 
@@ -970,6 +995,39 @@ class Raumfeld extends utils.Adapter {
 	}
 
 	/**
+	 * Sorgt dafuer, dass ein Raum einer Zone angehoert, und liefert deren
+	 * Kennung.
+	 *
+	 * Abspielen geht bei Raumfeld ueber die Zone, nicht ueber den Raum. Ein
+	 * Raum ohne Zone - der Zustand nach einem Neustart des Systems - bekommt
+	 * deshalb zuerst eine. Das erledigt connectRoomToZone mit leerem zoneUDN,
+	 * an der Anlage nachgemessen und ohne dass dafuer etwas laufen muesste.
+	 *
+	 * Anschliessend wird die Geraeteliste aufgefrischt: der Zonen-Renderer
+	 * taucht in listDevices erst auf, wenn es die Zone gibt.
+	 *
+	 * @param room - Der betroffene Raum.
+	 * @returns Die Kennung der Zone, oder undefined, wenn sich keine bilden liess.
+	 */
+	private async ensureZone(room: RoomRuntime): Promise<string | undefined> {
+		if (room.zoneUdn !== undefined && room.zoneUdn !== '') {
+			return room.zoneUdn;
+		}
+		if (!this.hostService) {
+			return undefined;
+		}
+
+		await this.hostService.connectRoomToZone(room.udn);
+		const fresh = await this.hostService.fetchZones();
+		const zoneUdn = fresh.allRooms.find(entry => entry.udn === room.udn)?.zoneUdn;
+		if (zoneUdn !== undefined && zoneUdn !== '') {
+			room.zoneUdn = zoneUdn;
+			await this.refreshDeviceLocations();
+		}
+		return zoneUdn;
+	}
+
+	/**
 	 * Fuegt einen Raum der Zone eines anderen Raumes hinzu.
 	 *
 	 * @param room - Der Raum, der wandern soll.
@@ -984,31 +1042,17 @@ class Raumfeld extends utils.Adapter {
 			this.log.warn(`Zielraum "${targetName}" ist nicht bekannt`);
 			return;
 		}
-		if (!this.hostService) {
-			return;
-		}
 		if (target.udn === room.udn) {
 			this.log.warn('Ein Raum kann sich nicht selbst beitreten');
 			return;
 		}
 
-		let zoneUdn = target.zoneUdn;
-		if (zoneUdn === undefined || zoneUdn === '') {
-			// Der Zielraum gehoert noch keiner Zone an. Ein connectRoomToZone
-			// mit leerem zoneUDN legt eine an - nachgemessen an der Anlage, und
-			// zwar ohne dass dafuer etwas abgespielt werden muesste. Die neue
-			// Kennung wird anschliessend direkt abgefragt, statt auf die
-			// Zonenmeldung zu warten, die erst Bruchteile spaeter eintrifft.
-			await this.hostService.connectRoomToZone(target.udn);
-			const fresh = await this.hostService.fetchZones();
-			zoneUdn = fresh.allRooms.find(entry => entry.udn === target.udn)?.zoneUdn;
-		}
-
+		const zoneUdn = await this.ensureZone(target);
 		if (zoneUdn === undefined || zoneUdn === '') {
 			this.log.warn(`Fuer "${targetName}" liess sich keine Zone bilden`);
 			return;
 		}
-		await this.hostService.connectRoomToZone(room.udn, zoneUdn);
+		await this.hostService?.connectRoomToZone(room.udn, zoneUdn);
 	}
 
 	/**

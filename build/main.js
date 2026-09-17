@@ -29,6 +29,7 @@ var import_events = require("./lib/events");
 var import_gena = require("./lib/gena");
 var import_hostService = require("./lib/hostService");
 var import_library = require("./lib/library");
+var import_playback = require("./lib/playback");
 var import_raumfeldXml = require("./lib/raumfeldXml");
 var import_report = require("./lib/report");
 var import_renderer = require("./lib/renderer");
@@ -38,6 +39,8 @@ class Raumfeld extends utils.Adapter {
   library;
   /** Adresse der Beschreibung des MediaServers, an dem die Bibliothek haengt. */
   libraryLocation;
+  /** Kennung des MediaServers; wird zum Abspielen ganzer Sammlungen gebraucht. */
+  mediaServerUdn;
   /** Raum-UDN zu Objekt-ID, um Umbenennungen zu erkennen. */
   roomIds = /* @__PURE__ */ new Map();
   /** Objekt-ID zu den Laufzeitangaben des Raumes. */
@@ -311,6 +314,7 @@ class Raumfeld extends utils.Adapter {
       for (const device of await this.hostService.fetchDevices()) {
         this.deviceLocations.set(device.udn, device.location);
         if (device.type.includes("MediaServer")) {
+          this.mediaServerUdn = device.udn;
           await this.setupLibrary(device.location);
         }
       }
@@ -423,10 +427,13 @@ class Raumfeld extends utils.Adapter {
    */
   async writePosition(roomId, control) {
     const position = await control.positionInfo();
-    await this.setState(`rooms.${roomId}.transport.position`, position.position, true);
-    await this.setState(`rooms.${roomId}.transport.positionSec`, (0, import_events.durationToSeconds)(position.position), true);
-    await this.setState(`rooms.${roomId}.transport.duration`, position.duration, true);
-    await this.setState(`rooms.${roomId}.transport.durationSec`, (0, import_events.durationToSeconds)(position.duration), true);
+    const usable = (value) => value === "NOT_IMPLEMENTED" || value === "0:00:00" ? "" : value;
+    const elapsed = usable(position.position);
+    const total = usable(position.duration);
+    await this.setState(`rooms.${roomId}.transport.position`, elapsed, true);
+    await this.setState(`rooms.${roomId}.transport.positionSec`, (0, import_events.durationToSeconds)(elapsed), true);
+    await this.setState(`rooms.${roomId}.transport.duration`, total, true);
+    await this.setState(`rooms.${roomId}.transport.durationSec`, (0, import_events.durationToSeconds)(total), true);
   }
   /**
    * Verarbeitet eine Meldung eines Renderers.
@@ -725,6 +732,9 @@ class Raumfeld extends utils.Adapter {
       default:
         break;
     }
+    if (path === "transport.playObject" || path === "transport.playUri") {
+      await this.ensureZone(room);
+    }
     const transport = await this.transportControl(room);
     if (!transport) {
       this.log.warn(`Kein erreichbarer Renderer fuer ${roomId}`);
@@ -784,13 +794,12 @@ class Raumfeld extends utils.Adapter {
       this.log.warn(`In der Bibliothek gibt es keinen Eintrag "${objectId}"`);
       return;
     }
-    if (found.entry.uri === "") {
-      this.log.warn(
-        `"${found.entry.title}" ist eine Sammlung ohne eigene Abspieladresse. Einzelne Titel lassen sich abspielen, ganze Sammlungen erst mit der Warteschlange.`
-      );
+    const uri = found.entry.uri !== "" ? found.entry.uri : this.mediaServerUdn !== void 0 ? (0, import_playback.containerPlayUri)(this.mediaServerUdn, found.entry.id) : "";
+    if (uri === "") {
+      this.log.warn(`"${found.entry.title}" ist eine Sammlung, und die Kennung des MediaServers ist unbekannt.`);
       return;
     }
-    await transport.setUri(found.entry.uri, found.didl);
+    await transport.setUri(uri, found.entry.uri !== "" ? found.didl : "");
     await transport.play();
     this.log.info(`Spiele "${found.entry.title}"`);
     if (found.entry.duration !== "" && roomId !== void 0) {
@@ -862,6 +871,38 @@ class Raumfeld extends utils.Adapter {
     await control.setFilter(filter);
   }
   /**
+   * Sorgt dafuer, dass ein Raum einer Zone angehoert, und liefert deren
+   * Kennung.
+   *
+   * Abspielen geht bei Raumfeld ueber die Zone, nicht ueber den Raum. Ein
+   * Raum ohne Zone - der Zustand nach einem Neustart des Systems - bekommt
+   * deshalb zuerst eine. Das erledigt connectRoomToZone mit leerem zoneUDN,
+   * an der Anlage nachgemessen und ohne dass dafuer etwas laufen muesste.
+   *
+   * Anschliessend wird die Geraeteliste aufgefrischt: der Zonen-Renderer
+   * taucht in listDevices erst auf, wenn es die Zone gibt.
+   *
+   * @param room - Der betroffene Raum.
+   * @returns Die Kennung der Zone, oder undefined, wenn sich keine bilden liess.
+   */
+  async ensureZone(room) {
+    var _a;
+    if (room.zoneUdn !== void 0 && room.zoneUdn !== "") {
+      return room.zoneUdn;
+    }
+    if (!this.hostService) {
+      return void 0;
+    }
+    await this.hostService.connectRoomToZone(room.udn);
+    const fresh = await this.hostService.fetchZones();
+    const zoneUdn = (_a = fresh.allRooms.find((entry) => entry.udn === room.udn)) == null ? void 0 : _a.zoneUdn;
+    if (zoneUdn !== void 0 && zoneUdn !== "") {
+      room.zoneUdn = zoneUdn;
+      await this.refreshDeviceLocations();
+    }
+    return zoneUdn;
+  }
+  /**
    * Fuegt einen Raum der Zone eines anderen Raumes hinzu.
    *
    * @param room - Der Raum, der wandern soll.
@@ -877,24 +918,16 @@ class Raumfeld extends utils.Adapter {
       this.log.warn(`Zielraum "${targetName}" ist nicht bekannt`);
       return;
     }
-    if (!this.hostService) {
-      return;
-    }
     if (target.udn === room.udn) {
       this.log.warn("Ein Raum kann sich nicht selbst beitreten");
       return;
     }
-    let zoneUdn = target.zoneUdn;
-    if (zoneUdn === void 0 || zoneUdn === "") {
-      await this.hostService.connectRoomToZone(target.udn);
-      const fresh = await this.hostService.fetchZones();
-      zoneUdn = (_a = fresh.allRooms.find((entry) => entry.udn === target.udn)) == null ? void 0 : _a.zoneUdn;
-    }
+    const zoneUdn = await this.ensureZone(target);
     if (zoneUdn === void 0 || zoneUdn === "") {
       this.log.warn(`Fuer "${targetName}" liess sich keine Zone bilden`);
       return;
     }
-    await this.hostService.connectRoomToZone(room.udn, zoneUdn);
+    await ((_a = this.hostService) == null ? void 0 : _a.connectRoomToZone(room.udn, zoneUdn));
   }
   /**
    * Beantwortet Anfragen der Konfigurationsseite.
