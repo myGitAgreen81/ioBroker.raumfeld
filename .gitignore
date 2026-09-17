@@ -19,3 +19,9 @@ coverage
 # i18n intermediate files
 admin/i18n/flat.txt
 admin/i18n/*/flat.txt
+
+# Rohdaten der Geraeteerkundung: jederzeit mit "node tools/explore.mts" neu zu
+# erzeugen und zu gross fuer sinnvolle Diffs. Der lesbare Bericht
+# tools/output/raumfeld.md bleibt dagegen versioniert - er dokumentiert, was
+# die Geraete koennen, auch fuer jemanden ohne die Hardware.
+tools/output/*.json
