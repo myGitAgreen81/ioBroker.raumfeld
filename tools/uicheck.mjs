@@ -39,18 +39,11 @@ for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
 
 console.log('\n=== testConnection (ohne eingetragene Adresse) ===');
 const host = found.hostCandidates[0];
+const { describeSystem } = require('/opt/dev/ioBroker.raumfeld/build/lib/report.js');
 const probe = new RaumfeldHostService({ address: host });
-const info = await probe.fetchHostInfo();
-const zones = await probe.fetchZones();
-const devices = await probe.fetchDevices();
-const rooms = zones.allRooms.map((room) => room.name).join(', ') || 'keine';
 console.log(
-	[
-		`Host ${host} antwortet.`,
-		`Geraet: ${info.hostName ?? 'unbekannt'}, steht im Raum ${info.roomName ?? 'unbekannt'}.`,
-		`${zones.numRooms} Raeume (${rooms}), ${zones.zones.length} Zonen.`,
-		`${devices.length} Geraete im System.`,
-	]
-		.map((line) => `   ${line}`)
+	describeSystem(host, await probe.fetchHostInfo(), await probe.fetchZones(), await probe.fetchDevices())
+		.split('\n')
+		.map(line => `   ${line}`)
 		.join('\n'),
 );

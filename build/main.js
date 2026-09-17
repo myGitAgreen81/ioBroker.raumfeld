@@ -30,6 +30,7 @@ var import_gena = require("./lib/gena");
 var import_hostService = require("./lib/hostService");
 var import_library = require("./lib/library");
 var import_raumfeldXml = require("./lib/raumfeldXml");
+var import_report = require("./lib/report");
 var import_renderer = require("./lib/renderer");
 class Raumfeld extends utils.Adapter {
   hostService;
@@ -967,7 +968,7 @@ class Raumfeld extends utils.Adapter {
    * @returns Ein lesbarer Bericht fuer die Oberflaeche.
    */
   async describeConnection(message) {
-    var _a, _b, _c, _d;
+    var _a, _b;
     const config = message != null ? message : {};
     const bindAddress = String((_a = config.bindAddress) != null ? _a : "").trim() || void 0;
     let address = String((_b = config.hostAddress) != null ? _b : "").trim();
@@ -982,13 +983,7 @@ class Raumfeld extends utils.Adapter {
     const info = await probe.fetchHostInfo();
     const zones = await probe.fetchZones();
     const devices = await probe.fetchDevices();
-    const rooms = zones.allRooms.map((room) => room.name).join(", ") || "keine";
-    return [
-      `Host ${address} antwortet.`,
-      `Geraet: ${(_c = info.hostName) != null ? _c : "unbekannt"}, steht im Raum ${(_d = info.roomName) != null ? _d : "unbekannt"}.`,
-      `${zones.numRooms} Raeume (${rooms}), ${zones.zones.length} Zonen.`,
-      `${devices.length} Geraete im System.`
-    ].join("\n");
+    return (0, import_report.describeSystem)(address, info, zones, devices);
   }
   /**
    * Wird beim Beenden gerufen. Die Rueckmeldung muss in jedem Fall erfolgen,

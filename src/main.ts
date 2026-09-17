@@ -12,6 +12,7 @@ import { GenaListener, localAddressTowards } from './lib/gena';
 import { HOST_SERVICE_PORT, RaumfeldHostService } from './lib/hostService';
 import { LibraryClient } from './lib/library';
 import { roomIdFromName } from './lib/raumfeldXml';
+import { describeSystem } from './lib/report';
 import { RendererControl } from './lib/renderer';
 import type { LibraryEntry, RaumfeldRoom, ZoneConfiguration } from './lib/types';
 
@@ -1103,13 +1104,7 @@ class Raumfeld extends utils.Adapter {
 		const zones = await probe.fetchZones();
 		const devices = await probe.fetchDevices();
 
-		const rooms = zones.allRooms.map(room => room.name).join(', ') || 'keine';
-		return [
-			`Host ${address} antwortet.`,
-			`Geraet: ${info.hostName ?? 'unbekannt'}, steht im Raum ${info.roomName ?? 'unbekannt'}.`,
-			`${zones.numRooms} Raeume (${rooms}), ${zones.zones.length} Zonen.`,
-			`${devices.length} Geraete im System.`,
-		].join('\n');
+		return describeSystem(address, info, zones, devices);
 	}
 
 	/**
