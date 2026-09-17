@@ -1,0 +1,106 @@
+{
+	"common": {
+		"name": "raumfeld",
+		"version": "0.0.1",
+		"news": {
+			"0.0.1": {
+				"en": "initial release",
+				"de": "Erstveröffentlichung",
+				"ru": "Начальная версия",
+				"pt": "lançamento inicial",
+				"nl": "Eerste uitgave",
+				"fr": "Première version",
+				"it": "Versione iniziale",
+				"es": "Versión inicial",
+				"pl": "Pierwsze wydanie",
+				"uk": "Початкова версія",
+				"zh-cn": "首次出版"
+			}
+		},
+		"titleLang": {
+			"en": "Teufel Raumfeld",
+			"de": "Teufel Raumfeld",
+			"ru": "Тойфель Раумфельд",
+			"pt": "Teufel Raumfeld",
+			"nl": "Teufel Raumfeld",
+			"fr": "Teufel Raumfeld",
+			"it": "Teufel Raumfeld",
+			"es": "Teufel Raumfeld",
+			"pl": "Teufela Raumfelda",
+			"uk": "Тойфель Раумфельд",
+			"zh-cn": "托菲尔·劳姆菲尔德"
+		},
+		"desc": {
+			"en": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"de": "Steuern Sie den Teufel-Raumfeld-Multiroom-Lautsprecher über UPnP und den Raumfeld-Host-Webservice",
+			"ru": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"pt": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP e den Raumfeld-Host-Webservice",
+			"nl": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP en de Raumfeld-Host-Webservice",
+			"fr": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP et le Raumfeld-Host-Webservice",
+			"it": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"es": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"pl": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"uk": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher ueber UPnP und den Raumfeld-Host-Webservice",
+			"zh-cn": "Steuert Teufel-Raumfeld-Multiroom-Lautsprecher UPnP 和 Raumfeld-Host-Webservice"
+		},
+		"authors": ["myGitAgreen81 <alex.gruen@gmail.com>"],
+		"keywords": ["raumfeld", "teufel", "multiroom", "upnp", "audio", "speaker"],
+		"licenseInformation": {
+			"type": "free",
+			"license": "MIT"
+		},
+		"platform": "Javascript/Node.js",
+		"icon": "raumfeld.png",
+		"enabled": true,
+		"extIcon": "https://raw.githubusercontent.com/myGitAgreen81/ioBroker.raumfeld/main/admin/raumfeld.png",
+		"readme": "https://github.com/myGitAgreen81/ioBroker.raumfeld/blob/main/README.md",
+		"loglevel": "info",
+		"tier": 3,
+		"mode": "daemon",
+		"type": "multimedia",
+		"compact": true,
+		"connectionType": "local",
+		"dataSource": "push",
+		"adminUI": {
+			"config": "json"
+		},
+		"dependencies": [
+			{
+				"js-controller": ">=6.0.11"
+			}
+		],
+		"globalDependencies": [
+			{
+				"admin": ">=7.0.23"
+			}
+		]
+	},
+	"native": {
+		"option1": true,
+		"option2": "42"
+	},
+	"objects": [],
+	"instanceObjects": [
+		{
+			"_id": "info",
+			"type": "channel",
+			"common": {
+				"name": "Information"
+			},
+			"native": {}
+		},
+		{
+			"_id": "info.connection",
+			"type": "state",
+			"common": {
+				"role": "indicator.connected",
+				"name": "Device or service connected",
+				"type": "boolean",
+				"read": true,
+				"write": false,
+				"def": false
+			},
+			"native": {}
+		}
+	]
+}
