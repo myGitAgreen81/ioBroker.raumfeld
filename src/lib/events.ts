@@ -13,6 +13,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import type { TrackInfo } from './types';
+import { asText } from './xmlText';
 
 const parser = new XMLParser({
 	ignoreAttributes: false,
@@ -26,23 +27,6 @@ const parser = new XMLParser({
 
 /** Ein Knoten des zerlegten XML-Baums. */
 type XmlNode = Record<string, unknown>;
-
-/**
- * Wandelt einen gelesenen Wert in Text, ohne bei Objekten "[object Object]"
- * zu erzeugen.
- *
- * @param value - Der gelesene Wert unbekannten Typs.
- * @returns Der Wert als Text, sonst eine leere Zeichenkette.
- */
-function asText(value: unknown): string {
-	if (typeof value === 'string') {
-		return value;
-	}
-	if (typeof value === 'number' || typeof value === 'boolean') {
-		return String(value);
-	}
-	return '';
-}
 
 /**
  * Zerlegt den Rumpf einer NOTIFY-Meldung in seine Eigenschaften.

@@ -23,6 +23,7 @@ __export(soap_exports, {
 });
 module.exports = __toCommonJS(soap_exports);
 var import_fast_xml_parser = require("fast-xml-parser");
+var import_xmlText = require("./xmlText");
 const parser = new import_fast_xml_parser.XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@",
@@ -49,15 +50,6 @@ class SoapFault extends Error {
 function escapeXml(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
-function asText(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
 async function soapCall(controlUrl, serviceType, action, args = {}, timeoutMs = 1e4) {
   var _a, _b, _c, _d, _e;
   const inner = Object.entries(args).map(([key, value]) => `<${key}>${escapeXml(String(value))}</${key}>`).join("");
@@ -81,8 +73,8 @@ async function soapCall(controlUrl, serviceType, action, args = {}, timeoutMs = 
     const error = (_d = detail.UPnPError) != null ? _d : {};
     throw new SoapFault(
       action,
-      asText(error.errorCode) || String(res.status),
-      asText(error.errorDescription) || asText(fault.faultstring) || "unbekannter Fehler"
+      (0, import_xmlText.asText)(error.errorCode) || String(res.status),
+      (0, import_xmlText.asText)(error.errorDescription) || (0, import_xmlText.asText)(fault.faultstring) || "unbekannter Fehler"
     );
   }
   if (!res.ok) {
@@ -94,7 +86,7 @@ async function soapCall(controlUrl, serviceType, action, args = {}, timeoutMs = 
     if (name.startsWith("@")) {
       continue;
     }
-    result[name] = asText(value);
+    result[name] = (0, import_xmlText.asText)(value);
   }
   return result;
 }

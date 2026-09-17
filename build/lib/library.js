@@ -24,6 +24,7 @@ __export(library_exports, {
 module.exports = __toCommonJS(library_exports);
 var import_fast_xml_parser = require("fast-xml-parser");
 var import_soap = require("./soap");
+var import_xmlText = require("./xmlText");
 const parser = new import_fast_xml_parser.XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@",
@@ -31,21 +32,6 @@ const parser = new import_fast_xml_parser.XMLParser({
   parseTagValue: false,
   isArray: (name) => ["container", "item", "res"].includes(name)
 });
-function asText(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return asText(value[0]);
-  }
-  if (typeof value === "object" && value !== null) {
-    return asText(value["#text"]);
-  }
-  return "";
-}
 function parseLibraryEntries(xml) {
   var _a, _b, _c, _d;
   if (xml.trim().length === 0) {
@@ -62,18 +48,18 @@ function parseLibraryEntries(xml) {
       const resources = (_c = node.res) != null ? _c : [];
       const first = resources[0];
       entries.push({
-        id: asText(node["@id"]),
-        parentId: asText(node["@parentID"]),
+        id: (0, import_xmlText.asText)(node["@id"]),
+        parentId: (0, import_xmlText.asText)(node["@parentID"]),
         kind,
-        title: asText(node["dc:title"]),
-        upnpClass: asText(node["upnp:class"]),
-        section: asText(node["raumfeld:section"]),
-        childCount: Number(asText(node["@childCount"])) || 0,
-        artist: asText((_d = node["upnp:artist"]) != null ? _d : node["dc:creator"]),
-        album: asText(node["upnp:album"]),
-        albumArt: asText(node["upnp:albumArtURI"]),
-        duration: first ? asText(first["@duration"]) : "",
-        uri: first ? asText(first) : ""
+        title: (0, import_xmlText.asText)(node["dc:title"]),
+        upnpClass: (0, import_xmlText.asText)(node["upnp:class"]),
+        section: (0, import_xmlText.asText)(node["raumfeld:section"]),
+        childCount: Number((0, import_xmlText.asText)(node["@childCount"])) || 0,
+        artist: (0, import_xmlText.asText)((_d = node["upnp:artist"]) != null ? _d : node["dc:creator"]),
+        album: (0, import_xmlText.asText)(node["upnp:album"]),
+        albumArt: (0, import_xmlText.asText)(node["upnp:albumArtURI"]),
+        duration: first ? (0, import_xmlText.asText)(first["@duration"]) : "",
+        uri: first ? (0, import_xmlText.asText)(first) : ""
       });
     }
   }

@@ -450,9 +450,10 @@ class Raumfeld extends utils.Adapter {
     if (values.CurrentPlayMode !== void 0) {
       await this.setState(`${base}.transport.playMode`, values.CurrentPlayMode, true);
     }
-    if (values.CurrentTrackDuration !== void 0) {
-      await this.setState(`${base}.transport.duration`, values.CurrentTrackDuration, true);
-      await this.setState(`${base}.transport.durationSec`, (0, import_events.durationToSeconds)(values.CurrentTrackDuration), true);
+    const reportedDuration = values.CurrentTrackDuration;
+    if (reportedDuration !== void 0 && reportedDuration !== "0:00:00" && reportedDuration !== "NOT_IMPLEMENTED") {
+      await this.setState(`${base}.transport.duration`, reportedDuration, true);
+      await this.setState(`${base}.transport.durationSec`, (0, import_events.durationToSeconds)(reportedDuration), true);
     }
     if (values.AVTransportURI !== void 0) {
       await this.setState(`${base}.track.uri`, values.AVTransportURI, true);
@@ -750,7 +751,7 @@ class Raumfeld extends utils.Adapter {
         await this.setState(id, "", true);
         return;
       case "transport.playObject":
-        await this.playObject(transport, String(value));
+        await this.playObject(transport, String(value), roomId);
         await this.setState(id, "", true);
         return;
       default:
@@ -767,9 +768,10 @@ class Raumfeld extends utils.Adapter {
    *
    * @param transport - Der Renderer, der abspielen soll.
    * @param objectId - Kennung des Eintrags aus der Bibliothek.
+   * @param roomId - Objekt-ID des Raumes, fuer die Spieldauer.
    * @returns Nichts.
    */
-  async playObject(transport, objectId) {
+  async playObject(transport, objectId, roomId) {
     if (!this.library) {
       this.log.warn("Die Bibliothek ist nicht verbunden");
       return;
@@ -788,6 +790,10 @@ class Raumfeld extends utils.Adapter {
     await transport.setUri(found.entry.uri, found.didl);
     await transport.play();
     this.log.info(`Spiele "${found.entry.title}"`);
+    if (found.entry.duration !== "" && roomId !== void 0) {
+      await this.setState(`rooms.${roomId}.transport.duration`, found.entry.duration, true);
+      await this.setState(`rooms.${roomId}.transport.durationSec`, (0, import_events.durationToSeconds)(found.entry.duration), true);
+    }
   }
   /**
    * Fuehrt einen Befehl des media-Zweiges aus.

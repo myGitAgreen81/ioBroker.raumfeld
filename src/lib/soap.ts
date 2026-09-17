@@ -8,6 +8,7 @@
  */
 
 import { XMLParser } from 'fast-xml-parser';
+import { asText } from './xmlText';
 
 const parser = new XMLParser({
 	ignoreAttributes: false,
@@ -52,23 +53,6 @@ function escapeXml(value: string): string {
 		.replace(/>/g, '&gt;')
 		.replace(/"/g, '&quot;')
 		.replace(/'/g, '&apos;');
-}
-
-/**
- * Wandelt einen gelesenen Wert in Text, ohne bei Objekten "[object Object]"
- * zu erzeugen.
- *
- * @param value - Der gelesene Wert.
- * @returns Der Wert als Text.
- */
-function asText(value: unknown): string {
-	if (typeof value === 'string') {
-		return value;
-	}
-	if (typeof value === 'number' || typeof value === 'boolean') {
-		return String(value);
-	}
-	return '';
 }
 
 /**

@@ -25,6 +25,7 @@ __export(raumfeldXml_exports, {
 });
 module.exports = __toCommonJS(raumfeldXml_exports);
 var import_fast_xml_parser = require("fast-xml-parser");
+var import_xmlText = require("./xmlText");
 const parser = new import_fast_xml_parser.XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@",
@@ -34,18 +35,9 @@ const parser = new import_fast_xml_parser.XMLParser({
   // wenn jemand einen zweiten Lautsprecher kauft.
   isArray: (name) => ["zone", "room", "renderer", "device"].includes(name)
 });
-function asText(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
 function attr(node, name) {
   const value = node[`@${name}`];
-  return value === void 0 || value === null ? void 0 : asText(value);
+  return value === void 0 || value === null ? void 0 : (0, import_xmlText.asText)(value);
 }
 function parseRenderer(node) {
   var _a, _b;
@@ -99,7 +91,7 @@ function parseDeviceList(xml) {
       type: (_b = attr(node, "type")) != null ? _b : "",
       location: (_c = attr(node, "location")) != null ? _c : "",
       // Der Geraetename steht als Textinhalt im Element, nicht als Attribut.
-      name: asText(node["#text"])
+      name: (0, import_xmlText.asText)(node["#text"])
     };
   });
 }
@@ -108,8 +100,8 @@ function parseHostInfo(xml) {
   const doc = parser.parse(xml);
   const info = (_a = doc.hostInfo) != null ? _a : {};
   return {
-    hostName: info.hostName === void 0 ? void 0 : asText(info.hostName),
-    roomName: info.roomName === void 0 ? void 0 : asText(info.roomName)
+    hostName: info.hostName === void 0 ? void 0 : (0, import_xmlText.asText)(info.hostName),
+    roomName: info.roomName === void 0 ? void 0 : (0, import_xmlText.asText)(info.roomName)
   };
 }
 function roomIdFromName(name) {

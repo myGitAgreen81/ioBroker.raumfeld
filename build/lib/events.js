@@ -25,6 +25,7 @@ __export(events_exports, {
 });
 module.exports = __toCommonJS(events_exports);
 var import_fast_xml_parser = require("fast-xml-parser");
+var import_xmlText = require("./xmlText");
 const parser = new import_fast_xml_parser.XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@",
@@ -34,15 +35,6 @@ const parser = new import_fast_xml_parser.XMLParser({
   parseAttributeValue: false,
   parseTagValue: false
 });
-function asText(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
 function parsePropertySet(xml) {
   var _a, _b, _c;
   const doc = parser.parse(xml);
@@ -55,7 +47,7 @@ function parsePropertySet(xml) {
       if (name.startsWith("@")) {
         continue;
       }
-      result[name] = asText(value);
+      result[name] = (0, import_xmlText.asText)(value);
     }
   }
   return result;
@@ -75,11 +67,11 @@ function parseLastChange(xml) {
       if (typeof node !== "object" || node === null) {
         continue;
       }
-      const channel = asText((_c = node["@Channel"]) != null ? _c : node["@channel"]);
+      const channel = (0, import_xmlText.asText)((_c = node["@Channel"]) != null ? _c : node["@channel"]);
       if (channel !== "" && channel !== "Master") {
         continue;
       }
-      result[name] = asText(node["@val"]);
+      result[name] = (0, import_xmlText.asText)(node["@val"]);
     }
   }
   return result;
@@ -97,13 +89,13 @@ function parseDidlLite(xml) {
     return void 0;
   }
   return {
-    title: asText(item["dc:title"]),
-    artist: asText((_c = item["upnp:artist"]) != null ? _c : item["dc:creator"]),
-    album: asText(item["upnp:album"]),
-    albumArtUri: asText(item["upnp:albumArtURI"]),
+    title: (0, import_xmlText.asText)(item["dc:title"]),
+    artist: (0, import_xmlText.asText)((_c = item["upnp:artist"]) != null ? _c : item["dc:creator"]),
+    album: (0, import_xmlText.asText)(item["upnp:album"]),
+    albumArtUri: (0, import_xmlText.asText)(item["upnp:albumArtURI"]),
     // Raumfeld vermerkt hier die Quelle, etwa "Spotify" oder "TuneIn".
-    section: asText(item["raumfeld:section"]),
-    objectId: asText(item["@id"])
+    section: (0, import_xmlText.asText)(item["raumfeld:section"]),
+    objectId: (0, import_xmlText.asText)(item["@id"])
   };
 }
 function durationToSeconds(value) {

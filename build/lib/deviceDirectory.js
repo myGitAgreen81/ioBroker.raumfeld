@@ -23,14 +23,12 @@ __export(deviceDirectory_exports, {
 });
 module.exports = __toCommonJS(deviceDirectory_exports);
 var import_fast_xml_parser = require("fast-xml-parser");
+var import_xmlText = require("./xmlText");
 const parser = new import_fast_xml_parser.XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@",
   isArray: (name) => ["service", "device"].includes(name)
 });
-function asText(value) {
-  return typeof value === "string" ? value : "";
-}
 function shortServiceName(urn) {
   const parts = urn.split(":");
   return parts.length >= 2 ? parts[parts.length - 2] : urn;
@@ -55,14 +53,14 @@ async function readServices(location, timeoutMs = 8e3) {
     }
     const list = (_d = device.serviceList) == null ? void 0 : _d.service;
     for (const service of list != null ? list : []) {
-      const serviceType = asText(service.serviceType);
+      const serviceType = (0, import_xmlText.asText)(service.serviceType);
       if (serviceType === "") {
         continue;
       }
       services.set(shortServiceName(serviceType), {
         serviceType,
-        controlUrl: new URL(asText(service.controlURL), location).toString(),
-        eventSubUrl: new URL(asText(service.eventSubURL), location).toString()
+        controlUrl: new URL((0, import_xmlText.asText)(service.controlURL), location).toString(),
+        eventSubUrl: new URL((0, import_xmlText.asText)(service.eventSubURL), location).toString()
       });
     }
   }

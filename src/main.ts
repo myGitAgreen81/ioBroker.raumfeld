@@ -493,9 +493,20 @@ class Raumfeld extends utils.Adapter {
 		if (values.CurrentPlayMode !== undefined) {
 			await this.setState(`${base}.transport.playMode`, values.CurrentPlayMode, true);
 		}
-		if (values.CurrentTrackDuration !== undefined) {
-			await this.setState(`${base}.transport.duration`, values.CurrentTrackDuration, true);
-			await this.setState(`${base}.transport.durationSec`, durationToSeconds(values.CurrentTrackDuration), true);
+		// "0:00:00" und "NOT_IMPLEMENTED" sind keine Dauer, sondern Platzhalter:
+		// bei gestreamten Titeln fuehrt Raumfeld die Laufzeit nicht mit.
+		// Nachgemessen meldet das Geraet beim Abspielen eines Demo-Titels
+		// TrackDuration 0:00:00 und eine RelTime im Bereich von Wochen. Wuerden
+		// diese Werte uebernommen, loeschten sie die richtige Dauer wieder, die
+		// beim Starten aus der Bibliothek kam.
+		const reportedDuration = values.CurrentTrackDuration;
+		if (
+			reportedDuration !== undefined &&
+			reportedDuration !== '0:00:00' &&
+			reportedDuration !== 'NOT_IMPLEMENTED'
+		) {
+			await this.setState(`${base}.transport.duration`, reportedDuration, true);
+			await this.setState(`${base}.transport.durationSec`, durationToSeconds(reportedDuration), true);
 		}
 		if (values.AVTransportURI !== undefined) {
 			await this.setState(`${base}.track.uri`, values.AVTransportURI, true);
@@ -827,7 +838,7 @@ class Raumfeld extends utils.Adapter {
 				await this.setState(id, '', true);
 				return;
 			case 'transport.playObject':
-				await this.playObject(transport, String(value));
+				await this.playObject(transport, String(value), roomId);
 				await this.setState(id, '', true);
 				return;
 			default:
@@ -845,9 +856,10 @@ class Raumfeld extends utils.Adapter {
 	 *
 	 * @param transport - Der Renderer, der abspielen soll.
 	 * @param objectId - Kennung des Eintrags aus der Bibliothek.
+	 * @param roomId - Objekt-ID des Raumes, fuer die Spieldauer.
 	 * @returns Nichts.
 	 */
-	private async playObject(transport: RendererControl, objectId: string): Promise<void> {
+	private async playObject(transport: RendererControl, objectId: string, roomId?: string): Promise<void> {
 		if (!this.library) {
 			this.log.warn('Die Bibliothek ist nicht verbunden');
 			return;
@@ -870,6 +882,15 @@ class Raumfeld extends utils.Adapter {
 		await transport.setUri(found.entry.uri, found.didl);
 		await transport.play();
 		this.log.info(`Spiele "${found.entry.title}"`);
+
+		// Die Spieldauer steht in der Bibliothek, aber nicht beim Renderer:
+		// nachgemessen meldet der beim Abspielen eines solchen Titels
+		// TrackDuration 0:00:00 und eine RelTime im Bereich von Wochen. Solange
+		// die Bibliothek es besser weiss, wird ihr Wert genommen.
+		if (found.entry.duration !== '' && roomId !== undefined) {
+			await this.setState(`rooms.${roomId}.transport.duration`, found.entry.duration, true);
+			await this.setState(`rooms.${roomId}.transport.durationSec`, durationToSeconds(found.entry.duration), true);
+		}
 	}
 
 	/**

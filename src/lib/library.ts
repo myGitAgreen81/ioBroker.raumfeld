@@ -14,6 +14,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { soapCall } from './soap';
 import type { LibraryEntry, ServiceEndpoint } from './types';
+import { asText } from './xmlText';
 
 const parser = new XMLParser({
 	ignoreAttributes: false,
@@ -25,33 +26,6 @@ const parser = new XMLParser({
 
 /** Ein Knoten des zerlegten XML-Baums. */
 type XmlNode = Record<string, unknown>;
-
-/**
- * Wandelt einen gelesenen Wert in Text.
- *
- * Elemente mit Attributen liefert der Parser als Objekt; deren Textinhalt
- * steht dann unter "#text". Ein blosses String() ergaebe hier
- * "[object Object]" - genau der Fall tritt bei upnp:artist ein, das ein
- * role-Attribut traegt.
- *
- * @param value - Der gelesene Wert.
- * @returns Der Wert als Text.
- */
-function asText(value: unknown): string {
-	if (typeof value === 'string') {
-		return value;
-	}
-	if (typeof value === 'number' || typeof value === 'boolean') {
-		return String(value);
-	}
-	if (Array.isArray(value)) {
-		return asText(value[0]);
-	}
-	if (typeof value === 'object' && value !== null) {
-		return asText((value as XmlNode)['#text']);
-	}
-	return '';
-}
 
 /**
  * Wertet ein DIDL-Lite-Dokument zu einer Liste von Eintraegen aus.

@@ -16,6 +16,7 @@ import type {
 	RaumfeldZone,
 	ZoneConfiguration,
 } from './types';
+import { asText } from './xmlText';
 
 const parser = new XMLParser({
 	ignoreAttributes: false,
@@ -29,28 +30,6 @@ const parser = new XMLParser({
 
 /** Ein Knoten des zerlegten XML-Baums. Werte sind bewusst unbekannt. */
 type XmlNode = Record<string, unknown>;
-
-/**
- * Wandelt einen aus dem XML gelesenen Wert in Text.
- *
- * Ein schlichtes String() waere hier falsch: liefert der Parser statt eines
- * Textes ein Objekt - etwa weil ein Element wider Erwarten Kinder hat -,
- * entstuende daraus die Zeichenkette "[object Object]", die dann unbemerkt in
- * einem Datenpunkt landet.
- *
- * @param value - Der gelesene Wert unbekannten Typs.
- * @returns Der Wert als Text, oder eine leere Zeichenkette, wenn er sich nicht
- *   sinnvoll darstellen laesst.
- */
-function asText(value: unknown): string {
-	if (typeof value === 'string') {
-		return value;
-	}
-	if (typeof value === 'number' || typeof value === 'boolean') {
-		return String(value);
-	}
-	return '';
-}
 
 /**
  * Liest ein Attribut eines Knotens.

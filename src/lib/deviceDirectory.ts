@@ -10,6 +10,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import type { ServiceEndpoint } from './types';
+import { asText } from './xmlText';
 
 const parser = new XMLParser({
 	ignoreAttributes: false,
@@ -19,16 +20,6 @@ const parser = new XMLParser({
 
 /** Ein Knoten des zerlegten XML-Baums. */
 type XmlNode = Record<string, unknown>;
-
-/**
- * Wandelt einen gelesenen Wert in Text.
- *
- * @param value - Der gelesene Wert.
- * @returns Der Wert als Text.
- */
-function asText(value: unknown): string {
-	return typeof value === 'string' ? value : '';
-}
 
 /**
  * Kuerzt einen Diensttyp auf den sprechenden Teil.
